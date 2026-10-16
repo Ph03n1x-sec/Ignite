@@ -13,7 +13,7 @@
 set -Eeuo pipefail
 
 readonly APP_NAME="ignite"
-readonly APP_VERSION="1.0"
+readonly APP_VERSION="1.1"
 readonly KALI_MIRROR="https://http.kali.org/kali"
 MODE=install
 INSTALL_DONUT=1
@@ -56,6 +56,7 @@ Usage: ./ignite [OPTIONS]
   --theme-only     Upgrade an existing install's theme; leave tools alone
   --transparent    Experimental: enable terminal transparency after install
   --safe-mode      Force opaque terminals and stop Picom (if transparency glitches)
+  --patch          Apply post-install fixes (Wine noise, etc.) to an existing install
   --check          Check the installed desktop and tools
   --help           Show this message
 
@@ -179,9 +180,10 @@ What would you like to do?
   2) Theme only    Refresh the look/configs on an existing install; leave tools untouched.
   3) Transparent   Turn ON experimental terminal transparency (needs an install already).
   4) Safe mode     Force opaque terminals and stop the compositor (fixes transparency glitches).
-  5) Check         Verify an existing install and report status; changes nothing.
-  6) Help          Show the full usage text and exit.
-  7) Quit          Exit without doing anything.
+  5) Patch         Apply post-install fixes (Wine noise, etc.) to an existing install.
+  6) Check         Verify an existing install and report status; changes nothing.
+  7) Help          Show the full usage text and exit.
+  8) Quit          Exit without doing anything.
 MENU
 }
 
@@ -191,9 +193,10 @@ _apply_choice() {  # map a key to MODE; exits for help/quit; returns 1 to keep w
     2)    MODE=theme ;;
     3)    MODE=transparent ;;
     4)    MODE=safe ;;
-    5)    MODE=check ;;
-    6)    printf '\033[?25h'; clear 2>/dev/null; usage; exit 0 ;;
-    7|q|Q) printf '\033[?25h'; clear 2>/dev/null; say 'Nothing to do. Bye!'; exit 0 ;;
+    5)    MODE=patch ;;
+    6)    MODE=check ;;
+    7)    printf '\033[?25h'; clear 2>/dev/null; usage; exit 0 ;;
+    8|q|Q) printf '\033[?25h'; clear 2>/dev/null; say 'Nothing to do. Bye!'; exit 0 ;;
     *)    return 1 ;;
   esac
   return 0
@@ -246,8 +249,8 @@ choose_mode() {
   _phoenix_load
   art=${#PHOENIX_ART[@]}
   rows=$(tput lines 2>/dev/null || echo 0)
-  total=$(( art + 16 ))          # phoenix + footer(5) + menu(9) + blank(1) + prompt(1)
-  up=$(( art + 15 ))             # lines from the prompt up to the top of the phoenix
+  total=$(( art + 17 ))          # phoenix + footer(5) + menu(10) + blank(1) + prompt(1)
+  up=$(( art + 16 ))             # lines from the prompt up to the top of the phoenix
   _phoenix_render 0
   if [[ -t 1 ]] && (( rows > art + 1 )) && (( rows < total )); then
     for ((f = 1; f <= 14; f++)); do
@@ -258,7 +261,7 @@ choose_mode() {
   _menu_text
   printf '\n'
   if [[ -t 1 ]] && (( rows >= total )); then
-    printf '   Press 1-7  (Enter = Install): '
+    printf '   Press 1-8  (Enter = Install): '
     printf '\033[s'                        # remember the prompt position
     trap 'printf "\033[?25h\033[0m"; exit 130' INT
     printf '\033[?25l'                      # hide cursor during the animation
@@ -273,9 +276,9 @@ choose_mode() {
     done
     trap - INT
   else
-    read -rp '   Enter a number [1-7] (default 1): ' key || { printf '\n'; exit 0; }
+    read -rp '   Enter a number [1-8] (default 1): ' key || { printf '\n'; exit 0; }
     printf '\n'
-    _apply_choice "${key:-1}" || die "Invalid choice: '$key' (expected 1-7)."
+    _apply_choice "${key:-1}" || die "Invalid choice: '$key' (expected 1-8)."
   fi
   if [[ "$MODE" == install ]]; then
     choose_components || { choose_mode; return; }
@@ -372,6 +375,7 @@ else
       --theme-only) MODE=theme ;;
       --transparent) MODE=transparent ;;
       --safe-mode) MODE=safe ;;
+      --patch) MODE=patch ;;
       --check) MODE=check ;;
       --help|-h) usage; exit 0 ;;
       *) usage >&2; exit 2 ;;
@@ -623,6 +627,33 @@ check_setup() {
   fi
   return "$failed"
 }
+
+apply_patches() {
+  local patched=0
+  # ── Shellter: suppress Wine debug noise ──
+  if [[ -f /usr/local/bin/shellter ]]; then
+    if grep -q 'docker exec' /usr/local/bin/shellter &&
+       ! grep -q 'WINEDEBUG=-all' /usr/local/bin/shellter; then
+      say 'Patching Shellter wrapper: suppressing Wine debug noise (WINEDEBUG=-all).'
+      sudo sed -i 's/docker exec -it veil-box/docker exec -it -e WINEDEBUG=-all veil-box/g' /usr/local/bin/shellter
+      patched=$(( patched + 1 ))
+    else
+      say 'OK: Shellter wrapper already suppresses Wine noise.'
+    fi
+  else
+    say 'Shellter wrapper not found; nothing to patch.'
+  fi
+  if (( patched == 0 )); then
+    say 'Everything is already up to date.'
+  else
+    say "$patched patch(es) applied."
+  fi
+}
+
+if [[ "$MODE" == patch ]]; then
+  apply_patches
+  exit 0
+fi
 
 if [[ "$MODE" == check ]]; then
   check_setup
