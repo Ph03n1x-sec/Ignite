@@ -1,0 +1,3030 @@
+#!/usr/bin/env bash
+# ignite — Black Ph03n1x workstation setup (Kali i3 + Donut) for a fresh VMware Fusion snapshot.
+# Ignite your Black Ph03n1x workstation. Run as your normal Kali user: ./ignite
+#
+# ─────────────────────────── DISCLAIMER ───────────────────────────
+# Version 1.0. This is a personal setup script, shared as-is.
+# It was built and tested on ONE machine only: my personal MacBook with an
+# Apple Silicon (ARM) processor, running Kali Linux as an ARM64 guest in
+# VMware Fusion. It is NOT guaranteed to work on other hardware, other
+# hypervisors, Intel/AMD (x86) hosts, or different Kali versions.
+# Use at your own risk. No warranty of any kind.  —  https://ph03n1x.net
+# ───────────────────────────────────────────────────────────────────
+set -Eeuo pipefail
+
+readonly APP_NAME="ignite"
+readonly APP_VERSION="1.0"
+readonly KALI_MIRROR="https://http.kali.org/kali"
+MODE=install
+INSTALL_DONUT=1
+INSTALL_VEIL=1
+INSTALL_SHELLTER=1
+INSTALL_OBSIDIAN=1
+INSTALL_TLOGGER=1
+USER_NAME=ph03n1x
+STAGE_DIR=
+BACKUP_DIR=
+DESKTOP_INSTALLED=0
+# Progress-UI state: when UI_ON=1 the phoenix stays on screen, noisy command
+# output goes to $LOG, and each phase redraws a progress bar on the terminal.
+UI_ON=0
+LOG=
+UI_STEP=0
+UI_TOTAL=1
+UI_CUR=
+declare -a UI_DONE=()
+
+say() { printf '[%s] %s\n' "$APP_NAME" "$*"; }
+die() {
+  printf '[%s] ERROR: %s\n' "$APP_NAME" "$*" >&2
+  # If the progress UI redirected output, also show the error on the real screen.
+  [[ "${UI_ON:-0}" -eq 1 ]] && printf '\n   \033[1;31mERROR: %s\033[0m\n' "$*" >&3 2>/dev/null
+  exit 1
+}
+
+usage() {
+  printf 'ignite v%s — Black Ph03n1x workstation setup\n\n' "$APP_VERSION"
+  cat <<'USAGE'
+Usage: ./ignite [OPTIONS]
+
+  (no option)      Show the interactive menu. Non-interactive runs do a full install.
+  --desktop-only   Install the desktop without Donut, Veil, Shellter, Obsidian or TLoggerV3.1
+  --skip-veil      Full install, but skip Veil and Shellter (Donut/Obsidian still install)
+  --no-obsidian    Full install, but skip Obsidian
+  --no-tlogger     Full install, but skip TLoggerV3.1
+  --username NAME  Set your username (default: ph03n1x) — used in Obsidian vault and TLoggerV3.1
+  --theme-only     Upgrade an existing install's theme; leave tools alone
+  --transparent    Experimental: enable terminal transparency after install
+  --safe-mode      Force opaque terminals and stop Picom (if transparency glitches)
+  --check          Check the installed desktop and tools
+  --help           Show this message
+
+Run this inside Kali as your normal user, not with sudo. The script requests
+sudo only for Kali packages. It backs up any configuration it replaces.
+Keep black_phoenix.png on the Desktop (or beside the script) for the
+illustrated wallpaper; a dark built-in fallback is used if it is missing.
+
+DISCLAIMER
+  Personal setup script, shared as-is. Built and tested on ONE machine only:
+  a personal MacBook with an Apple Silicon (ARM) processor, running Kali Linux
+  as an ARM64 guest in VMware Fusion. NOT guaranteed to work on other hardware,
+  other hypervisors, Intel/AMD (x86) hosts, or different Kali versions.
+  Use at your own risk. No warranty of any kind.   https://ph03n1x.net
+USAGE
+}
+
+PHOENIX_PALETTE=(226 220 214 208 202 196 160 124 88)   # yellow -> gold -> red -> deep red
+declare -a PHOENIX_ART=()
+
+_phoenix_load() {
+  # Load the Braille-art phoenix into PHOENIX_ART once.
+  [[ ${#PHOENIX_ART[@]} -gt 0 ]] && return 0
+  mapfile -t PHOENIX_ART <<'ART'
+⢠⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠈⠙⠶⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⠓
+⠀⠀⠀⠈⠙⠲⢤⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⡼⠉⠀
+⠀⠀⠛⠤⣠⡀⠀⠀⠉⠑⠳⠤⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⡴⠋⣁⡴⠃
+⠀⠀⠀⠀⠀⠈⠉⠀⠀⠀⠀⢀⠈⠙⢄⡀⠀⠀⢸⠀⠀⠀⠀⠀⠀⣠⠤⠤⣤⠤⠀⠀⠀⠀⢀⡤⡖⠉⠀⠖⠞⠁⢀⠀
+⠀⠀⠀⠠⠤⣀⡀⠀⠀⠀⠀⢸⡀⠀⠀⠹⣆⠀⢹⡤⡀⠀⢀⣴⢫⣥⢀⠾⠁⠀⠀⠀⢀⣶⠋⠀⣧⢀⠀⣠⠤⠖⠉⠀
+⠀⠀⠀⠀⠀⠉⠑⠒⠆⠀⠀⠸⡇⠀⠀⠀⠹⡦⠈⠓⡥⣄⠈⠉⠘⠋⢸⢀⠀⠀⠀⠀⣸⠉⠀⢠⡻⠈⠀⢋⣀⡤⠀⠀
+⠀⠀⠀⠀⠀⠤⣀⣀⡀⠀⠀⠀⢳⠀⠀⠀⠀⠉⢧⣄⠓⢚⣪⡤⠀⠀⠀⢳⡄⠀⠀⣴⠃⠀⢀⣾⠁⠀⠘⠉⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠈⠙⠀⣀⠈⣧⣄⠀⠀⠀⠀⠑⠶⣀⣀⡀⠀⠀⠀⠀⢯⠶⠉⠀⢀⢀⡾⠈⠘⠚⠒⡤⠄⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⢤⠒⠊⠉⠁⠀⠈⠱⣄⡄⠀⠀⠀⠀⠀⠈⠁⠀⠀⠀⠀⢸⡆⣠⣠⠶⢫⣀⠋⠒⣴⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⠤⠚⠀⡀⠀⠉⠓⠒⠤⠤⠤⠴⠀⠀⠀⠀⠀⢸⡄⠈⠸⢤⠈⠉⢦⡠⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠾⠁⠀⠀⡴⠋⠀⢠⡆⠀⢀⠀⠀⡗⠀⠀⠀⠀⢠⢯⡙⢧⡄⠀⢷⡦⠀⠁⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠾⠃⢀⡴⠋⠀⡰⠏⠀⡞⠎⢰⢄⢀⣰⡟⠈⢲⡄⠹⠓⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠘⠁⠀⠘⠁⢀⠞⠀⠀⢸⡯⡟⠹⡦⠀⠈⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⠛⠀⣠⠞⠋⢰⠳⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⡼⠉⠀⣼⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡞⡀⠀⢰⡁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣸⡄⣿⠀⠌⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢻⠃⡏⠀⢹⠁⠀⢠⠶⠓⢧⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠘⡆⢹⠀⠀⢧⡀⡀⠀⢀⡼⠂⢀⠀⠀⠀⡴⠛⠉⠉⢦⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢹⣌⢧⣄⣰⠮⣩⠍⠉⠀⣠⠞⠂⠀⠀⢫⣤⣠⠀⣸⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠱⡎⠛⣷⣝⠶⢏⣩⣍⣁⣠⠀⠀⠀⠀⠀⠀⢠⡇⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢳⠀⠙⢻⣦⡈⠿⣍⣍⡉⠀⠀⠀⠀⣀⡠⠎⠁⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢧⠀⠀⠉⢫⣄⠈⠳⣈⠉⠉⠉⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⠀⠀⠀⠀⠹⡆⠀⠹⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠘⠂⠀⠀⠀⠀⣹⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠁⠀⠀
+ART
+}
+
+_phoenix_render() {  # _phoenix_render [offset]: print the art, flame colours flowing by offset
+  local off=${1:-0} i n p=${#PHOENIX_PALETTE[@]} idx
+  n=${#PHOENIX_ART[@]}
+  for ((i = 0; i < n; i++)); do
+    if [[ -t 1 ]]; then
+      idx=$(( (i * p / n + off) % p ))
+      printf '\033[38;5;%sm%s\033[0m\n' "${PHOENIX_PALETTE[idx]}" "${PHOENIX_ART[i]}"
+    else
+      printf '%s\n' "${PHOENIX_ART[i]}"
+    fi
+  done
+}
+
+_phoenix_footer() {
+  if [[ -t 1 ]]; then
+    printf '\n\033[1;38;5;208m        I G N I T E\033[0m  \033[38;5;244mv%s\033[0m\n' "$APP_VERSION"
+    printf '\033[38;5;244m        Black Ph03n1x workstation  ·  OffSec SM\033[0m\n'
+    printf '\033[38;5;45m        https://ph03n1x.net\033[0m\n'
+    printf '\033[38;5;240m        personal build, tested only on Apple Silicon Kali (VMware Fusion) — use at your own risk\033[0m\n\n'
+  else
+    printf '\n        I G N I T E  v%s\n        Black Ph03n1x workstation - OffSec SM\n        https://ph03n1x.net\n        personal build, tested only on Apple Silicon Kali (VMware Fusion) - use at your own risk\n\n' "$APP_VERSION"
+  fi
+}
+
+_compact_banner() {  # tiny flame + title for terminals too short for the full art
+  if [[ -t 1 ]]; then
+    printf '\033[1;38;5;226m   (\033[38;5;214m\\\033[0m   \033[1;38;5;208mI G N I T E\033[0m \033[38;5;244mv%s\033[0m\n' "$APP_VERSION"
+    printf '\033[38;5;208m    )\033[38;5;196m\\\033[0m  \033[38;5;244mBlack Ph03n1x workstation · OffSec SM\033[0m\n'
+    printf '\033[38;5;196m   (__)\033[0m \033[38;5;45mhttps://ph03n1x.net\033[0m\n'
+    printf '\033[38;5;240m        personal build, Apple Silicon Kali only — use at your own risk\033[0m\n\n'
+  else
+    printf '   IGNITE  v%s  -  Black Ph03n1x workstation - OffSec SM\n   https://ph03n1x.net\n   personal build, Apple Silicon Kali only - use at your own risk\n\n' "$APP_VERSION"
+  fi
+}
+
+_banner_for_height() {  # full phoenix when it fits the terminal, else the compact one
+  local rows
+  rows=$(tput lines 2>/dev/null || echo 24)
+  if (( rows >= 40 )); then phoenix_banner; else _compact_banner; fi
+}
+
+phoenix_banner() {  # static banner (flags, pipes, and the install progress UI)
+  _phoenix_load
+  _phoenix_render 0
+  _phoenix_footer
+}
+
+phoenix_ignite() {  # short "ignition": flames flow for a moment, then settle + footer
+  _phoenix_load
+  [[ -t 1 ]] || { phoenix_banner; return 0; }
+  local frames=${1:-24} f
+  printf '\033[?25l'; clear   # hide cursor, clear once; frames redraw in place
+  for ((f = 0; f < frames; f++)); do
+    printf '\033[H'
+    _phoenix_render "$f"
+    sleep 0.07
+  done
+  printf '\033[H'; _phoenix_render 0; _phoenix_footer
+  printf '\033[?25h'
+}
+
+_menu_text() {
+  cat <<'MENU'
+What would you like to do?
+
+  1) Install       Set up the Black Ph03n1x workstation (choose tools next). [recommended]
+  2) Theme only    Refresh the look/configs on an existing install; leave tools untouched.
+  3) Transparent   Turn ON experimental terminal transparency (needs an install already).
+  4) Safe mode     Force opaque terminals and stop the compositor (fixes transparency glitches).
+  5) Check         Verify an existing install and report status; changes nothing.
+  6) Help          Show the full usage text and exit.
+  7) Quit          Exit without doing anything.
+MENU
+}
+
+_apply_choice() {  # map a key to MODE; exits for help/quit; returns 1 to keep waiting
+  case "$1" in
+    1|'') MODE=install ;;
+    2)    MODE=theme ;;
+    3)    MODE=transparent ;;
+    4)    MODE=safe ;;
+    5)    MODE=check ;;
+    6)    printf '\033[?25h'; clear 2>/dev/null; usage; exit 0 ;;
+    7|q|Q) printf '\033[?25h'; clear 2>/dev/null; say 'Nothing to do. Bye!'; exit 0 ;;
+    *)    return 1 ;;
+  esac
+  return 0
+}
+
+_yn() { (( $1 )) && printf '[\033[1;32mY\033[0m]' || printf '[\033[1;31mN\033[0m]'; }
+
+choose_components() {
+  local key arch_note_veil='' arch_note_shellter=''
+  local _ga; _ga=$(dpkg --print-architecture 2>/dev/null || echo unknown)
+  [[ "$_ga" == arm64 ]] && arch_note_veil='  (slow on arm64)' \
+                        && arch_note_shellter='  (needs Veil container on arm64)'
+  while :; do
+    printf '\033[2J\033[H'
+    _compact_banner
+    printf '  The Black Ph03n1x desktop is always included. Toggle which tools to add:\n\n'
+    printf '  %b 1) Donut        Shellcode-to-PE generator\n' "$(_yn "$INSTALL_DONUT")"
+    printf '  %b 2) Veil         AV-evasion payload generator%s\n' "$(_yn "$INSTALL_VEIL")" "$arch_note_veil"
+    printf '  %b 3) Shellter     PE injection tool%s\n' "$(_yn "$INSTALL_SHELLTER")" "$arch_note_shellter"
+    printf '  %b 4) Obsidian     Note-taking app with OSED vault\n' "$(_yn "$INSTALL_OBSIDIAN")"
+    printf '  %b 5) TLoggerV3.1   Ph03n1x terminal logger\n' "$(_yn "$INSTALL_TLOGGER")"
+    printf '\n  Press 1-5 to toggle, a = all on, n = all off, Enter to start, q to go back: '
+    read -rsn1 key
+    case "$key" in
+      1) INSTALL_DONUT=$(( 1 - INSTALL_DONUT )) ;;
+      2) INSTALL_VEIL=$(( 1 - INSTALL_VEIL ))
+         if [[ "$INSTALL_VEIL" -eq 0 && "$_ga" == arm64 ]]; then
+           INSTALL_SHELLTER=0
+         fi ;;
+      3) INSTALL_SHELLTER=$(( 1 - INSTALL_SHELLTER ))
+         if [[ "$INSTALL_SHELLTER" -eq 1 && "$_ga" == arm64 && "$INSTALL_VEIL" -eq 0 ]]; then
+           INSTALL_VEIL=1
+         fi ;;
+      4) INSTALL_OBSIDIAN=$(( 1 - INSTALL_OBSIDIAN )) ;;
+      5) INSTALL_TLOGGER=$(( 1 - INSTALL_TLOGGER )) ;;
+      a|A) INSTALL_DONUT=1; INSTALL_VEIL=1; INSTALL_SHELLTER=1; INSTALL_OBSIDIAN=1; INSTALL_TLOGGER=1 ;;
+      n|N) INSTALL_DONUT=0; INSTALL_VEIL=0; INSTALL_SHELLTER=0; INSTALL_OBSIDIAN=0; INSTALL_TLOGGER=0 ;;
+      ''|$'\n') printf '\n'; return 0 ;;
+      q|Q) return 1 ;;
+    esac
+  done
+}
+
+choose_mode() {
+  # Print the phoenix as normal output (never clear the screen). If the whole
+  # screen fits, keep the flames burning live while waiting for a keypress by
+  # repainting only the phoenix each tick and parking the cursor at the prompt.
+  # Shorter terminals get a one-time flicker, then a plain prompt (no corruption).
+  local key rows art total f off=0 up
+  _phoenix_load
+  art=${#PHOENIX_ART[@]}
+  rows=$(tput lines 2>/dev/null || echo 0)
+  total=$(( art + 16 ))          # phoenix + footer(5) + menu(9) + blank(1) + prompt(1)
+  up=$(( art + 15 ))             # lines from the prompt up to the top of the phoenix
+  _phoenix_render 0
+  if [[ -t 1 ]] && (( rows > art + 1 )) && (( rows < total )); then
+    for ((f = 1; f <= 14; f++)); do
+      printf '\033[%dA' "$art"; _phoenix_render "$f"; sleep 0.06
+    done
+  fi
+  _phoenix_footer
+  _menu_text
+  printf '\n'
+  if [[ -t 1 ]] && (( rows >= total )); then
+    printf '   Press 1-7  (Enter = Install): '
+    printf '\033[s'                        # remember the prompt position
+    trap 'printf "\033[?25h\033[0m"; exit 130' INT
+    printf '\033[?25l'                      # hide cursor during the animation
+    while :; do
+      off=$(( off + 1 ))
+      printf '\033[u\033[%dA' "$up"         # jump to the top of the phoenix
+      _phoenix_render "$off"                # repaint it with shifted flame colours
+      printf '\033[u'                       # back to the prompt
+      if read -rsn1 -t 0.12 key; then
+        if _apply_choice "$key"; then printf '\033[?25h\n'; break; fi
+      fi
+    done
+    trap - INT
+  else
+    read -rp '   Enter a number [1-7] (default 1): ' key || { printf '\n'; exit 0; }
+    printf '\n'
+    _apply_choice "${key:-1}" || die "Invalid choice: '$key' (expected 1-7)."
+  fi
+  if [[ "$MODE" == install ]]; then
+    choose_components || { choose_mode; return; }
+    if [[ -t 0 && -t 1 ]]; then
+      local _h
+      printf '\n  Your username is used in the Obsidian vault name and TLoggerV3.1 messages.\n'
+      read -rp "  Username [${USER_NAME}]: " _h
+      [[ -n "$_h" ]] && USER_NAME="$_h"
+    fi
+  fi
+}
+
+ui_supported() { [[ -t 1 && -t 2 ]]; }
+
+ui_bar() {  # ui_bar <pct> -> a 34-cell bar string
+  local pct=$1 width=34 filled i out=''
+  (( pct < 0 )) && pct=0; (( pct > 100 )) && pct=100
+  filled=$(( pct * width / 100 ))
+  for ((i = 0; i < width; i++)); do
+    if (( i < filled )); then out+='█'; else out+='░'; fi
+  done
+  printf '%s' "$out"
+}
+
+ui_begin() {  # start the install progress view (install/theme, terminal only)
+  ui_supported || return 0
+  case "$MODE" in
+    install)
+      UI_TOTAL=4
+      if [[ "$GUEST_ARCH" == arm64 ]]; then
+        [[ "$INSTALL_DONUT"    -eq 1 ]] && UI_TOTAL=$(( UI_TOTAL + 1 ))
+        [[ "$INSTALL_VEIL"     -eq 1 ]] && UI_TOTAL=$(( UI_TOTAL + 1 ))
+        [[ "$INSTALL_SHELLTER" -eq 1 ]] && UI_TOTAL=$(( UI_TOTAL + 1 ))
+      fi
+      [[ "$INSTALL_OBSIDIAN" -eq 1 ]] && UI_TOTAL=$(( UI_TOTAL + 1 ))
+      [[ "$INSTALL_TLOGGER"  -eq 1 ]] && UI_TOTAL=$(( UI_TOTAL + 1 ))
+      ;;
+    theme)   UI_TOTAL=3 ;;
+    *)       return 0 ;;
+  esac
+  exec 3>/dev/tty || return 0
+  UI_ON=1
+  _banner_for_height >&3 2>/dev/null          # show the phoenix once (normal output)
+  # Cache sudo now, while its prompt is still visible, before output is redirected.
+  printf '\n   Requesting sudo access (needed to install Kali packages)...\n\n' >&3
+  sudo -v || die 'sudo is required to install Kali packages.'
+  LOG=$(mktemp -t ignite.XXXXXX.log)
+  exec >>"$LOG" 2>&1   # tuck noisy command output into the log; phases print below
+  UI_STEP=0
+  printf '\n' >&3 2>/dev/null || true
+}
+
+progress() {  # progress "<label>": print one appended phase line with a small bar
+  if [[ "$UI_ON" -ne 1 ]]; then say "$*"; return 0; fi
+  UI_CUR="$*"
+  UI_STEP=$(( UI_STEP + 1 ))
+  local pct=$(( UI_STEP * 100 / UI_TOTAL ))
+  (( pct > 100 )) && pct=100
+  printf '   \033[38;5;208m[%d/%d]\033[0m %-38s \033[38;5;196m%s\033[0m \033[1m%3d%%\033[0m\n' \
+    "$UI_STEP" "$UI_TOTAL" "$*" "$(ui_bar "$pct")" "$pct" >&3 2>/dev/null || true
+}
+
+ui_finish() {  # all done: print the 100% line and a success panel
+  [[ "$UI_ON" -ne 1 ]] && return 0
+  UI_CUR=
+  {
+    printf '\n   \033[38;5;196m%s\033[0m \033[1;38;5;46m100%% complete\033[0m\n' "$(ui_bar 100)"
+    printf '\n   \033[1;38;5;46mBlack Ph03n1x is ready.\033[0m   \033[38;5;45mhttps://ph03n1x.net\033[0m\n\n'
+    printf '   - Log out and back into i3 to load the desktop.\n'
+    printf '   - Super+Return: terminal    Super+d: app launcher\n'
+    printf '   - flameshot button far left, Obsidian button right of mousepad.\n'
+    printf '   - Re-run with --check to verify, or --help for all options.\n\n'
+  } >&3 2>/dev/null || true
+  [[ -n "$LOG" && -f "$LOG" ]] && rm -f "$LOG"
+}
+
+if [[ $# -eq 0 ]]; then
+  # No flags: the animated phoenix + interactive menu when we have a terminal;
+  # otherwise a static banner and a default full install (keeps 'curl | bash' ok).
+  if [[ -t 0 && -t 1 ]]; then
+    choose_mode
+  else
+    phoenix_banner
+  fi
+else
+  phoenix_banner
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --desktop-only) INSTALL_DONUT=0; INSTALL_VEIL=0; INSTALL_SHELLTER=0; INSTALL_OBSIDIAN=0; INSTALL_TLOGGER=0 ;;
+      --skip-veil)    INSTALL_VEIL=0; INSTALL_SHELLTER=0 ;;
+      --no-obsidian)  INSTALL_OBSIDIAN=0 ;;
+      --no-tlogger)   INSTALL_TLOGGER=0 ;;
+      --username)     shift; [[ -n "${1:-}" ]] || die '--username requires a name'; USER_NAME="$1" ;;
+      --theme-only) MODE=theme ;;
+      --transparent) MODE=transparent ;;
+      --safe-mode) MODE=safe ;;
+      --check) MODE=check ;;
+      --help|-h) usage; exit 0 ;;
+      *) usage >&2; exit 2 ;;
+    esac
+    shift
+  done
+fi
+
+[[ "$(uname -s)" == Linux ]] || die 'This installer must run inside the Kali VM, not on macOS.'
+[[ -r /etc/os-release ]] || die 'Cannot identify this Linux distribution.'
+# /etc/os-release is the guest operating system's own metadata.
+# shellcheck disable=SC1091
+. /etc/os-release
+[[ "${ID:-}" == kali ]] || die "Expected Kali Linux; found ${ID:-unknown}."
+[[ "$(id -u)" -ne 0 ]] || die 'Run this as your normal Kali user, without sudo.'
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+WALLPAPER_SOURCE=
+for wallpaper_candidate in "$SCRIPT_DIR/black_phoenix.png" "$HOME/Desktop/black_phoenix.png"; do
+  if [[ -s "$wallpaper_candidate" ]]; then
+    WALLPAPER_SOURCE="$wallpaper_candidate"
+    break
+  fi
+done
+
+GUEST_ARCH=$(dpkg --print-architecture)
+case "$GUEST_ARCH" in
+  arm64|amd64) ;;
+  *) die "Unsupported guest architecture: $GUEST_ARCH (expected arm64 or amd64)." ;;
+esac
+say "Guest architecture: $GUEST_ARCH ($(uname -m))."
+if [[ "$GUEST_ARCH" == arm64 && "$MODE" == install ]]; then
+  [[ "$INSTALL_DONUT" -eq 1 ]] && say 'ARM64 Kali detected. The Donut CLI will use a private amd64 runtime.'
+  [[ "$INSTALL_VEIL"  -eq 1 ]] && say 'Veil and Shellter will run in a Docker container (emulated amd64).'
+fi
+
+cleanup() {
+  local exit_status=$?
+  printf '\033[?25h' >/dev/tty 2>/dev/null || true   # always restore the cursor
+  if [[ -n "$STAGE_DIR" && -d "$STAGE_DIR" ]]; then
+    rm -r -- "$STAGE_DIR"
+  fi
+  if [[ "$exit_status" -ne 0 && "$DESKTOP_INSTALLED" -eq 1 ]]; then
+    say 'The desktop files were installed, but a later step failed. Check the error above; you can rerun this script safely.'
+  fi
+  # With the progress UI active, command output was hidden in $LOG; on failure,
+  # surface where to look and the last lines of that log on the actual screen.
+  if [[ "$UI_ON" -eq 1 && "$exit_status" -ne 0 ]]; then
+    {
+      printf '\n   \033[1;31mInstall failed'
+      [[ -n "$UI_CUR" ]] && printf ' during: %s' "$UI_CUR"
+      printf '.\033[0m\n'
+      [[ -n "$LOG" && -f "$LOG" ]] && printf '   Full log: %s\n\n   --- last lines ---\n' "$LOG"
+    } >&3 2>/dev/null || true
+    [[ -n "$LOG" && -f "$LOG" ]] && tail -n 15 "$LOG" >&3 2>/dev/null || true
+  fi
+}
+trap cleanup EXIT
+
+backup_one() {
+  local source=$1 relative
+  [[ -e "$source" || -L "$source" ]] || return 0
+  relative=${source#"$HOME"/}
+  mkdir -p "$BACKUP_DIR/$(dirname "$relative")"
+  cp -a -- "$source" "$BACKUP_DIR/$relative"
+}
+
+append_shell_hook() {
+  local rc_file=$1 marker='# kali-i3-setup terminal naming' resolved
+  if [[ -f "$rc_file" ]] && grep -Fq "$marker" "$rc_file"; then
+    return 0
+  fi
+  backup_one "$rc_file"
+  if [[ -L "$rc_file" ]]; then
+    resolved=$(readlink -f -- "$rc_file") || die "Broken shell configuration symlink: $rc_file"
+    [[ -f "$resolved" ]] || die "Shell configuration symlink does not point to a file: $rc_file"
+    mkdir -p "$BACKUP_DIR/shell-rc-targets"
+    cp -a -- "$resolved" "$BACKUP_DIR/shell-rc-targets/$(basename "$rc_file")"
+  fi
+  {
+    printf '\n%s\n' "$marker"
+    printf '%s\n' '[ -f "$HOME/.config/kali-i3/terminal-title.sh" ] && . "$HOME/.config/kali-i3/terminal-title.sh"'
+  } >> "$rc_file"
+}
+
+append_tlogger_hook() {
+  local rc_file=$1 marker='# kali-i3-setup tlogger'
+  if [[ -f "$rc_file" ]] && grep -Fq "$marker" "$rc_file"; then
+    return 0
+  fi
+  backup_one "$rc_file"
+  if [[ -L "$rc_file" ]]; then
+    local resolved
+    resolved=$(readlink -f -- "$rc_file") || die "Broken shell configuration symlink: $rc_file"
+    [[ -f "$resolved" ]] || die "Shell configuration symlink does not point to a file: $rc_file"
+    mkdir -p "$BACKUP_DIR/shell-rc-targets"
+    cp -a -- "$resolved" "$BACKUP_DIR/shell-rc-targets/$(basename "$rc_file").tlogger"
+  fi
+  {
+    printf '\n%s\n' "$marker"
+    printf '%s\n' '[ -f "$HOME/.config/kali-i3/tlogger.sh" ] && . "$HOME/.config/kali-i3/tlogger.sh"'
+  } >> "$rc_file"
+}
+
+check_setup() {
+  local failed=0 helper
+  for helper in i3 rofi i3blocks xfce4-terminal thunar zsh xfconf-query picom feh flameshot; do
+    if command -v "$helper" >/dev/null 2>&1; then
+      say "OK: $helper"
+    else
+      say "MISSING: $helper"
+      failed=1
+    fi
+  done
+  if [[ -f "$HOME/.config/i3/config" ]] && i3 -C -c "$HOME/.config/i3/config"; then
+    say 'OK: i3 configuration parses.'
+  else
+    say 'FAILED: i3 configuration.'
+    failed=1
+  fi
+  if [[ -s "$HOME/.config/rofi/config.rasi" ]]; then
+    say 'OK: Rofi configuration is present. Test Super+d after logging into i3.'
+  else
+    say 'FAILED: Rofi configuration is missing.'
+    failed=1
+  fi
+  for helper in kali-i3-named-terminal kali-i3-files-menu kali-i3-files-block kali-i3-code-block kali-i3-mousepad-block kali-i3-flameshot-block kali-i3-obsidian-block kali-i3-remmina-block kali-i3-shift-held kali-i3-launch kali-i3-resize kali-i3-battery-block kali-i3-power-block kali-i3-power-menu kali-i3-vpn-block kali-i3-terminal-theme kali-i3-session-start; do
+    if [[ -f "$HOME/.local/bin/$helper" ]] && bash -n "$HOME/.local/bin/$helper"; then
+      say "OK: $helper"
+    else
+      say "FAILED: $helper"
+      failed=1
+    fi
+  done
+  if [[ -s "$HOME/.local/share/kali-i3-setup/phoenix-wallpaper.png" ]]; then
+    say 'OK: Black Ph03n1x wallpaper is installed.'
+  else
+    say 'FAILED: Black Ph03n1x wallpaper is missing.'
+    failed=1
+  fi
+  if [[ -f "$HOME/.config/kali-i3/terminal-title.sh" ]] &&
+     zsh -n "$HOME/.config/kali-i3/terminal-title.sh"; then
+    say 'OK: Black Ph03n1x Zsh prompt parses.'
+  else
+    say 'FAILED: Black Ph03n1x Zsh prompt.'
+    failed=1
+  fi
+  if [[ -f "$HOME/.config/kali-i3/disable-transparency" ]]; then
+    say 'OK: Stable opaque terminal mode is enabled.'
+  fi
+  if grep -q 'zoom-in-alt' "$HOME/.config/xfce4/terminal/accels.scm" 2>/dev/null; then
+    say 'OK: Ctrl+= enlarges terminal text.'
+  else
+    say 'FAILED: Terminal zoom accelerators are not installed.'
+    failed=1
+  fi
+  # xfce4-terminal 1.2.0 ignores its own default-working-dir preference, so the
+  # directory is passed on each launch instead.
+  if grep -q 'working-directory=' "$HOME/.config/i3/config" 2>/dev/null; then
+    say 'OK: New terminals open in ~/Desktop.'
+  else
+    say 'FAILED: New terminals do not open in ~/Desktop.'
+    failed=1
+  fi
+  local _state="${XDG_STATE_HOME:-$HOME/.local/state}/kali-i3-setup"
+  if command -v donut >/dev/null 2>&1 || [[ -x "$HOME/.local/bin/donut" ]]; then
+    local donut_cmd=donut help_text
+    [[ -x "$HOME/.local/bin/donut" ]] && donut_cmd="$HOME/.local/bin/donut"
+    help_text=$("$donut_cmd" -h 2>&1) || true
+    if [[ "$help_text" == *'usage: donut'* ]]; then
+      say 'OK: Donut CLI starts.'
+    else
+      say 'FAILED: Donut CLI did not show its help text.'
+      failed=1
+    fi
+  else
+    if [[ -f "$_state/skip-donut" ]]; then
+      say 'Donut was intentionally skipped.'
+    else
+      say 'FAILED: Donut CLI is absent. Re-run the installer.'
+      failed=1
+    fi
+  fi
+  if command -v veil >/dev/null 2>&1; then
+    local veil_version
+    if [[ "$GUEST_ARCH" == arm64 ]]; then
+      veil_version=$(docker exec veil-box veil --version 2>&1) || true
+      if [[ "$veil_version" == *'permission denied'* ]]; then
+        veil_version=$(sudo docker exec veil-box veil --version 2>&1) || true
+      fi
+    else
+      veil_version=$(veil --version 2>&1) || true
+    fi
+    if [[ "$veil_version" == *'Veil'* ]]; then
+      say 'OK: Veil starts.'
+    else
+      say 'FAILED: Veil did not report its version.'
+      failed=1
+    fi
+  else
+    if [[ -f "$_state/skip-veil" ]]; then
+      say 'Veil was intentionally skipped.'
+    else
+      say 'FAILED: Veil is absent. Re-run the installer.'
+      failed=1
+    fi
+  fi
+  if command -v shellter >/dev/null 2>&1; then
+    local shellter_check
+    if [[ "$GUEST_ARCH" == arm64 ]]; then
+      shellter_check=$(docker exec veil-box dpkg-query -W shellter 2>&1) || true
+      if [[ "$shellter_check" == *'permission denied'* ]]; then
+        shellter_check=$(sudo docker exec veil-box dpkg-query -W shellter 2>&1) || true
+      fi
+    else
+      shellter_check=$(dpkg-query -W shellter 2>&1) || true
+    fi
+    if [[ "$shellter_check" == *'shellter'* ]]; then
+      say 'OK: Shellter is installed.'
+    else
+      say 'FAILED: Shellter package not found in container.'
+      failed=1
+    fi
+  else
+    if [[ -f "$_state/skip-shellter" ]]; then
+      say 'Shellter was intentionally skipped.'
+    else
+      say 'FAILED: Shellter is absent. Re-run the installer.'
+      failed=1
+    fi
+  fi
+  if [[ -x "$HOME/.local/bin/obsidian" && -x "$HOME/.local/share/kali-i3-setup/obsidian/AppRun" ]]; then
+    say 'OK: Obsidian is installed.'
+  else
+    if [[ -f "$_state/skip-obsidian" ]]; then
+      say 'Obsidian was intentionally skipped.'
+    else
+      say 'Obsidian is not installed (optional; rerun the installer to add it).'
+    fi
+  fi
+  if [[ -f "$HOME/.config/kali-i3/tlogger.sh" ]] &&
+     zsh -n "$HOME/.config/kali-i3/tlogger.sh" 2>/dev/null; then
+    say 'OK: TLoggerV3.1 is installed and parses.'
+  else
+    if [[ -f "$_state/skip-tlogger" ]]; then
+      say 'TLoggerV3.1 was intentionally skipped.'
+    else
+      say 'TLoggerV3.1 is not installed (optional; rerun the installer to add it).'
+    fi
+  fi
+  return "$failed"
+}
+
+if [[ "$MODE" == check ]]; then
+  check_setup
+  exit $?
+fi
+
+if [[ "$MODE" == safe ]]; then
+  mkdir -p "$HOME/.config/kali-i3"
+  touch "$HOME/.config/kali-i3/disable-transparency"
+  if command -v pkill >/dev/null 2>&1; then
+    pkill -u "$(id -u)" -x picom 2>/dev/null || true
+  fi
+  if [[ -x "$HOME/.local/bin/kali-i3-terminal-theme" ]]; then
+    "$HOME/.local/bin/kali-i3-terminal-theme" opaque || true
+  fi
+  say 'Safe mode enabled. Open a new terminal or log out and back in.'
+  exit 0
+fi
+
+if [[ "$MODE" == transparent ]]; then
+  [[ -x "$HOME/.local/bin/kali-i3-terminal-theme" ]] ||
+    die 'Install the desktop first, then use --transparent.'
+  if [[ -e "$HOME/.config/kali-i3/disable-transparency" ]]; then
+    rm -- "$HOME/.config/kali-i3/disable-transparency"
+  fi
+  say 'Experimental transparency enabled. Log out and back into i3; use --safe-mode if focus changes glitch.'
+  exit 0
+fi
+
+ui_begin
+progress 'Installing Kali packages'
+say 'Checking Kali packages.'
+if [[ "$MODE" == theme ]]; then
+  packages=(zsh xfconf picom librsvg2-bin feh)
+else
+  packages=(
+    i3-wm i3blocks rofi xfce4-terminal thunar lxappearance zsh xfconf picom librsvg2-bin
+    arc-theme papirus-icon-theme fonts-jetbrains-mono fonts-noto-color-emoji
+    feh dunst network-manager-applet lxpolkit open-vm-tools-desktop mousepad xclip
+    python3-gi code-oss seclists flameshot remmina curl ca-certificates
+  )
+  if [[ "$GUEST_ARCH" == arm64 ]]; then
+    if [[ "$INSTALL_DONUT" -eq 1 ]]; then
+      packages+=(qemu-user python3)
+    fi
+    if [[ "$INSTALL_VEIL" -eq 1 || "$INSTALL_SHELLTER" -eq 1 ]]; then
+      packages+=(xvfb lftp qemu-user python3)
+      # docker-cli (the /usr/bin/docker binary) is only a Recommends of
+      # docker.io, which --no-install-recommends below would otherwise skip.
+      packages+=(qemu-user-binfmt docker.io docker-cli)
+    fi
+  else
+    [[ "$INSTALL_DONUT"    -eq 1 ]] && packages+=(donut)
+    [[ "$INSTALL_VEIL"     -eq 1 ]] && packages+=(veil)
+    [[ "$INSTALL_SHELLTER" -eq 1 ]] && packages+=(shellter)
+  fi
+fi
+missing_packages=()
+for package in "${packages[@]}"; do
+  if ! dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -qx 'install ok installed'; then
+    missing_packages+=("$package")
+  fi
+done
+if [[ ${#missing_packages[@]} -gt 0 ]]; then
+  say "Installing missing packages: ${missing_packages[*]}"
+  sudo -v
+  sudo apt-get update
+  sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${missing_packages[@]}"
+else
+  say 'Required packages are already installed.'
+fi
+
+progress 'Building the desktop configuration'
+STAGE_DIR=$(mktemp -d -t kali-i3-setup.XXXXXXXX)
+mkdir -p "$STAGE_DIR/bin" "$STAGE_DIR/config"
+
+cat > "$STAGE_DIR/config/i3-config" <<'I3_CONFIG'
+# Black Ph03n1x i3 setup: Mod4 is Super/Windows (often Command in VMware Fusion).
+set $mod Mod4
+font pango:JetBrains Mono 10
+floating_modifier $mod
+focus_follows_mouse no
+default_border pixel 2
+# Keep other apps minimal, but show each terminal's chosen name in its title bar.
+for_window [class="(?i)^xfce4-terminal$"] border normal 2
+# Open the file manager as a floating, centered window so it never splits the layout.
+for_window [class="(?i)^thunar$"] floating enable, move position center
+gaps inner 5
+gaps outer 2
+client.focused          #be2945 #210f19 #f3e8ec #be2945 #be2945
+client.focused_inactive #5b2b39 #181119 #d4c7cd #5b2b39 #5b2b39
+client.unfocused        #32212b #0d0e13 #a9aab4 #32212b #32212b
+client.urgent           #e1465d #551623 #fff0f3 #e1465d #e1465d
+
+bindsym $mod+Return exec --no-startup-id xfce4-terminal --disable-server --show-borders --dynamic-title-mode=replace --working-directory="$HOME/Desktop" --initial-title="Black Ph03n1x terminal" --execute zsh -i
+bindsym $mod+Shift+Return exec --no-startup-id ~/.local/bin/kali-i3-named-terminal
+bindsym $mod+d exec --no-startup-id rofi -show drun
+bindsym $mod+Shift+f exec --no-startup-id thunar
+# Screenshots with flameshot. Print is the usual key; $mod+Shift+s is the
+# fallback for the Mac keyboard in VMware Fusion, which has no Print key.
+bindsym Print exec --no-startup-id flameshot gui
+bindsym $mod+Shift+s exec --no-startup-id flameshot gui
+
+# Fallbacks if VMware captures the Mac Command key.
+bindsym Control+Mod1+Return exec --no-startup-id xfce4-terminal --disable-server --show-borders --dynamic-title-mode=replace --working-directory="$HOME/Desktop" --initial-title="Black Ph03n1x terminal" --execute zsh -i
+bindsym Control+Mod1+d exec --no-startup-id rofi -show drun
+# Fusion claims Command+F (Enter Full Screen) and Command+Space (Spotlight) on
+# the macOS host, so those combinations never reach the guest.
+bindsym Control+Mod1+f fullscreen toggle
+bindsym Control+Mod1+space floating toggle
+# Park the focused window out of sight and bring it back later. A floating
+# window returns floating and centred, so this doubles as a way to stash a
+# floating editor without closing it. Pressing show again re-hides it, and
+# with several windows parked it cycles through them.
+bindsym Control+Mod1+h move scratchpad
+bindsym Control+Mod1+s scratchpad show
+# Split direction plus a terminal in one keystroke: i3's bare split commands
+# change nothing on screen until the next window opens, which reads as a
+# dead key. Down stacks the new terminal below, Right puts it beside.
+bindsym Control+Mod1+Down split v; exec --no-startup-id xfce4-terminal --disable-server --show-borders --dynamic-title-mode=replace --working-directory="$HOME/Desktop" --initial-title="Black Ph03n1x terminal" --execute zsh -i
+bindsym Control+Mod1+Right split h; exec --no-startup-id xfce4-terminal --disable-server --show-borders --dynamic-title-mode=replace --working-directory="$HOME/Desktop" --initial-title="Black Ph03n1x terminal" --execute zsh -i
+# Bare splits on a prefix Fusion lets through, for placing a non-terminal window.
+bindsym Control+Mod1+v split v
+bindsym Control+Mod1+b split h
+
+bindsym $mod+Shift+q kill
+bindsym $mod+h focus left
+bindsym $mod+j focus down
+bindsym $mod+k focus up
+bindsym $mod+l focus right
+bindsym $mod+Shift+h move left
+bindsym $mod+Shift+j move down
+bindsym $mod+Shift+k move up
+bindsym $mod+Shift+l move right
+# Arrow equivalents of the four move keys above. Command+Shift+arrow is not a
+# Fusion menu shortcut or a macOS global hotkey, so the host forwards it.
+bindsym $mod+Shift+Left move left
+bindsym $mod+Shift+Down move down
+bindsym $mod+Shift+Up move up
+bindsym $mod+Shift+Right move right
+bindsym $mod+v split v
+bindsym $mod+b split h
+bindsym $mod+f fullscreen toggle
+bindsym $mod+space focus mode_toggle
+
+bindsym $mod+1 workspace number 1
+bindsym $mod+2 workspace number 2
+bindsym $mod+3 workspace number 3
+bindsym $mod+4 workspace number 4
+bindsym $mod+5 workspace number 5
+bindsym $mod+6 workspace number 6
+bindsym $mod+7 workspace number 7
+bindsym $mod+8 workspace number 8
+bindsym $mod+9 workspace number 9
+bindsym $mod+Shift+1 move container to workspace number 1
+bindsym $mod+Shift+2 move container to workspace number 2
+bindsym $mod+Shift+3 move container to workspace number 3
+bindsym $mod+Shift+4 move container to workspace number 4
+bindsym $mod+Shift+5 move container to workspace number 5
+bindsym $mod+Shift+6 move container to workspace number 6
+bindsym $mod+Shift+7 move container to workspace number 7
+bindsym $mod+Shift+8 move container to workspace number 8
+bindsym $mod+Shift+9 move container to workspace number 9
+
+mode "resize" {
+    # One pair of arrows grows and shrinks: each key moves the window's
+    # adjustable border the way it points. See kali-i3-resize for why this
+    # needs a helper rather than a plain resize command.
+    bindsym h exec --no-startup-id ~/.local/bin/kali-i3-resize left
+    bindsym j exec --no-startup-id ~/.local/bin/kali-i3-resize down
+    bindsym k exec --no-startup-id ~/.local/bin/kali-i3-resize up
+    bindsym l exec --no-startup-id ~/.local/bin/kali-i3-resize right
+    bindsym Left exec --no-startup-id ~/.local/bin/kali-i3-resize left
+    bindsym Down exec --no-startup-id ~/.local/bin/kali-i3-resize down
+    bindsym Up exec --no-startup-id ~/.local/bin/kali-i3-resize up
+    bindsym Right exec --no-startup-id ~/.local/bin/kali-i3-resize right
+    bindsym Return mode "default"
+    bindsym Escape mode "default"
+}
+bindsym $mod+r mode "resize"
+bindsym $mod+Shift+c reload
+bindsym $mod+Shift+r restart
+bindsym $mod+Shift+e exec --no-startup-id i3-msg exit
+
+exec --no-startup-id ~/.local/bin/kali-i3-session-start
+
+bar {
+    position top
+    status_command i3blocks
+    font pango:JetBrains Mono 10
+    tray_output primary
+    colors {
+        background #090b10
+        statusline #e3e5ed
+        separator #51303c
+        focused_workspace #b8203e #b8203e #fff3f5
+        active_workspace #49202f #49202f #e4dce2
+        inactive_workspace #090b10 #090b10 #a5a5b2
+        urgent_workspace #d83d55 #d83d55 #ffffff
+        binding_mode #b8203e #b8203e #ffffff
+    }
+}
+I3_CONFIG
+
+cat > "$STAGE_DIR/config/rofi-config.rasi" <<'ROFI_CONFIG'
+configuration {
+    modes: "drun,run,window";
+    show-icons: true;
+    icon-theme: "Papirus-Dark";
+    font: "JetBrains Mono 10";
+    drun-display-format: "{name}";
+}
+ROFI_CONFIG
+
+cat > "$STAGE_DIR/config/i3blocks-config" <<'I3BLOCKS_CONFIG'
+[flameshot]
+command=~/.local/bin/kali-i3-flameshot-block
+interval=once
+separator=true
+
+[phoenix]
+command=printf '✦ Ph03n1x\n\n#d84a62\n'
+interval=once
+separator=true
+
+[files]
+command=~/.local/bin/kali-i3-files-block
+interval=once
+separator=true
+
+[code]
+command=~/.local/bin/kali-i3-code-block
+interval=once
+separator=true
+
+[mousepad]
+command=~/.local/bin/kali-i3-mousepad-block
+interval=once
+separator=true
+
+[obsidian]
+command=~/.local/bin/kali-i3-obsidian-block
+interval=once
+separator=true
+
+[remmina]
+command=~/.local/bin/kali-i3-remmina-block
+interval=once
+separator=true
+
+[vpn]
+command=~/.local/bin/kali-i3-vpn-block
+interval=5
+separator=true
+
+[battery]
+command=~/.local/bin/kali-i3-battery-block
+interval=30
+separator=true
+
+[power]
+command=~/.local/bin/kali-i3-power-block
+interval=once
+separator=true
+I3BLOCKS_CONFIG
+
+cat > "$STAGE_DIR/config/terminal-accels.scm" <<'TERMINAL_ACCELS'
+; xfce4-terminal keyboard accelerators. Only the lines present here override a
+; default; everything else keeps its built-in key.
+;
+; Zoom in ships on <control>plus, but + is a shifted key, so enlarging text
+; really needs Ctrl+Shift++. The spare zoom-in-alt action defaults to the
+; numeric keypad, which a MacBook does not have, so it is rebound to Ctrl+=
+; (the same physical key, no Shift). Ctrl+Shift++ still works as well.
+(gtk_accel_path "<Actions>/terminal-window/zoom-in-alt" "<Control>equal")
+TERMINAL_ACCELS
+
+cat > "$STAGE_DIR/config/picom.conf" <<'PICOM_CONFIG'
+# Optional transparency only: XRender, full redraw, no expensive effects.
+backend = "xrender";
+use-damage = false;
+vsync = false;
+shadow = false;
+fading = false;
+PICOM_CONFIG
+
+cat > "$STAGE_DIR/config/ferox-config.toml" <<'FEROX_CONFIG'
+# feroxbuster user defaults for the Black Ph03n1x pentest desktop.
+# quiet hides the live progress bars (and banner): on an i3 workspace, splitting
+# in a new terminal resizes the scan pane and the progress bars redraw against
+# the wrong width, which garbles the output. Without them the results just
+# scroll and reflow cleanly. Coloured result lines are still shown.
+# Override per run on the command line (e.g. --silent for URL-only output).
+quiet = true
+FEROX_CONFIG
+
+cat > "$STAGE_DIR/config/flameshot.ini" <<'FLAMESHOT_INI'
+[General]
+# i3 ships no xdg-desktop-portal, so flameshot's default portal-based capture
+# waits and times out after ~30s, which looks like a hang when the bar button
+# or Print key is pressed. Legacy X11 capture grabs the screen directly and is
+# instant. flameshot names i3 as the exact case for this option.
+useX11LegacyScreenshot=true
+# The screenshot entry point is the 📷 button on the left of the bar, so the
+# daemon's own tray icon is redundant; hide it. flameshot still runs headless.
+disabledTrayIcon=true
+FLAMESHOT_INI
+
+cat > "$STAGE_DIR/config/phoenix-wallpaper.svg" <<'PHOENIX_WALLPAPER'
+<svg xmlns="http://www.w3.org/2000/svg" width="2560" height="1600" viewBox="0 0 2560 1600">
+  <defs>
+    <radialGradient id="sky" cx="72%" cy="49%" r="88%">
+      <stop offset="0" stop-color="#231019"/>
+      <stop offset="0.42" stop-color="#111017"/>
+      <stop offset="1" stop-color="#06090e"/>
+    </radialGradient>
+    <radialGradient id="halo">
+      <stop offset="0" stop-color="#ac1c3c" stop-opacity="0.34"/>
+      <stop offset="0.58" stop-color="#61152c" stop-opacity="0.12"/>
+      <stop offset="1" stop-color="#260f1d" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="flame" x1="0" y1="0" x2="0.75" y2="1">
+      <stop offset="0" stop-color="#661c35"/>
+      <stop offset="0.34" stop-color="#2b1827"/>
+      <stop offset="0.72" stop-color="#141721"/>
+      <stop offset="1" stop-color="#080d14"/>
+    </linearGradient>
+    <linearGradient id="ember" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#9f203f"/>
+      <stop offset="1" stop-color="#180d1a"/>
+    </linearGradient>
+  </defs>
+  <rect width="2560" height="1600" fill="url(#sky)"/>
+  <ellipse cx="1820" cy="790" rx="850" ry="750" fill="url(#halo)"/>
+  <g fill="none" stroke="#a62a48" stroke-opacity="0.10" stroke-width="2">
+    <path d="M0 1240 C540 1010 960 1120 1490 840 S2270 690 2560 780"/>
+    <path d="M0 1320 C620 1110 1020 1210 1570 920 S2300 780 2560 890"/>
+    <path d="M0 1400 C580 1200 1100 1300 1650 1010 S2270 900 2560 1000"/>
+  </g>
+  <g transform="translate(1830 790)">
+    <g fill="url(#flame)">
+      <path d="M-44-58 C-245-348-548-420-805-226 C-600-255-426-170-289-42 C-490-120-704-55-834 129 C-592 45-398 96-216 244 C-380 212-537 257-681 379 C-417 319-190 322-29 258 Z"/>
+      <path d="M44-58 C245-348 548-420 805-226 C600-255 426-170 289-42 C490-120 704-55 834 129 C592 45 398 96 216 244 C380 212 537 257 681 379 C417 319 190 322 29 258 Z"/>
+      <path d="M-58-164 C-19-249 32-254 80-167 C43-126 17-88 0-25 C-15-91-34-131-58-164 Z"/>
+      <path d="M-52-58 C-75 108-35 226 0 285 C35 226 75 108 52-58 C40-10 19 15 0 36 C-19 15-40-10-52-58 Z"/>
+    </g>
+    <g fill="url(#ember)">
+      <path d="M-13 254 C-91 410-67 545-8 656 C-27 504 23 408 27 313 Z"/>
+      <path d="M-75 251 C-226 380-230 506-192 616 C-147 466-69 384-19 330 Z"/>
+      <path d="M75 251 C226 380 230 506 192 616 C147 466 69 384 19 330 Z"/>
+    </g>
+    <circle cx="26" cy="-156" r="8" fill="#e33f57"/>
+  </g>
+</svg>
+PHOENIX_WALLPAPER
+
+cat > "$STAGE_DIR/bin/kali-i3-named-terminal" <<'NAMED_TERMINAL'
+#!/usr/bin/env bash
+set -euo pipefail
+name=$(rofi -dmenu -p 'Name new terminal (e.g. recon)' </dev/null) || exit 0
+[[ -n "$name" ]] || exit 0
+name=${name//$'\n'/ }
+name=${name//$'\r'/ }
+name=${name//$'\e'/}
+name=${name//$'\a'/}
+exec xfce4-terminal --disable-server --show-borders --dynamic-title-mode=replace \
+  --working-directory="$HOME/Desktop" \
+  --initial-title="$name" --execute env "KALI_I3_TERMINAL_TITLE=$name" zsh -i
+NAMED_TERMINAL
+
+cat > "$STAGE_DIR/bin/kali-i3-resize" <<'RESIZE'
+#!/usr/bin/env bash
+# kali-i3-resize <left|right|up|down>
+# Moves the window's adjustable border in the direction pressed, so the same
+# two arrow keys both grow and shrink it: grow the right-hand window leftwards
+# with Left, then give the space back with Right. The border that moves is the
+# one facing a neighbour, which is why no Shift key is needed.
+#
+# i3's config language has no conditionals, and chaining two resize commands
+# with ';' runs both (which slides a window instead of resizing it), so the
+# choice is made here from i3's own success report. The right/bottom border is
+# preferred; for the last window in a split there is none, so the left/top
+# border is used instead. A floating window can always resize, so it takes the
+# first branch and its right/bottom edge follows the arrow.
+set -uo pipefail
+step='10 px or 10 ppt'
+
+run() {
+  local reply
+  reply=$(i3-msg "resize $1 $step" 2>/dev/null) || return 1
+  [[ -n "$reply" && "$reply" != *'"success":false'* ]]
+}
+
+case "${1:-}" in
+  right) run 'grow right'   || run 'shrink left' ;;
+  left)  run 'shrink right' || run 'grow left'   ;;
+  down)  run 'grow down'    || run 'shrink up'   ;;
+  up)    run 'shrink down'  || run 'grow up'     ;;
+  *) printf 'Usage: kali-i3-resize [left|right|up|down]\n' >&2; exit 2 ;;
+esac
+exit 0
+RESIZE
+
+cat > "$STAGE_DIR/bin/kali-i3-shift-held" <<'SHIFT_HELD'
+#!/usr/bin/env bash
+# Exit 0 when Shift is held at this instant. i3blocks 1.5 tells a click handler
+# which button was pressed (BLOCK_BUTTON) but nothing about modifiers, so the
+# live state is read from X instead. Exits non-zero if Gdk is unavailable, which
+# makes a Shift+click behave like a plain click rather than failing.
+exec python3 -I -c '
+import sys
+try:
+    import gi
+    gi.require_version("Gdk", "3.0")
+    from gi.repository import Gdk
+except Exception:
+    sys.exit(1)
+display = Gdk.Display.get_default()
+if display is None:
+    sys.exit(1)
+keymap = Gdk.Keymap.get_for_display(display)
+sys.exit(0 if keymap.get_modifier_state() & Gdk.ModifierType.SHIFT_MASK else 1)
+'
+SHIFT_HELD
+
+cat > "$STAGE_DIR/bin/kali-i3-launch" <<'LAUNCH'
+#!/usr/bin/env bash
+# kali-i3-launch <float|tile> <class-regex> <command> [args...]
+# Starts a GUI program and, in float mode, floats and centres the window it
+# opens. i3 has no one-shot window rule, so the new window is found by diffing
+# the window ids in the tree before and after the launch. The class regex keeps
+# two concurrent launches from floating each other's window. Run this detached
+# (setsid -f) so the waiting loop never blocks an i3blocks click handler.
+set -uo pipefail
+[[ $# -ge 3 ]] || exit 2
+mode=$1
+class_re=$2
+shift 2
+
+window_ids() {
+  i3-msg -t get_tree 2>/dev/null | python3 -I -c '
+import json, sys
+try:
+    tree = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+found = []
+def walk(node):
+    if node.get("window"):
+        found.append(str(node["window"]))
+    for child in node.get("nodes", []) + node.get("floating_nodes", []):
+        walk(child)
+walk(tree)
+print(" ".join(found))
+'
+}
+
+# First window whose class matches, excluding the ids that existed before.
+new_window() {
+  i3-msg -t get_tree 2>/dev/null | python3 -I -c '
+import json, re, sys
+pattern = re.compile(sys.argv[1], re.I)
+known = set(sys.argv[2].split())
+try:
+    tree = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+hits = []
+def walk(node):
+    wid = node.get("window")
+    if wid and str(wid) not in known:
+        props = node.get("window_properties") or {}
+        if pattern.search(props.get("class") or ""):
+            hits.append(str(wid))
+    for child in node.get("nodes", []) + node.get("floating_nodes", []):
+        walk(child)
+walk(tree)
+print(hits[0] if hits else "")
+' "$1" "$2"
+}
+
+before=$(window_ids)
+setsid -f "$@" >/dev/null 2>&1 || exit 1
+[[ "$mode" == float ]] || exit 0
+
+# code-oss on arm64 can take a long time to map its first window.
+for _ in $(seq 1 150); do
+  sleep 0.2
+  target=$(new_window "$class_re" "$before")
+  if [[ -n "$target" ]]; then
+    i3-msg "[id=$target] floating enable, resize set 1100 700, move position center" \
+      >/dev/null 2>&1
+    exit 0
+  fi
+done
+exit 0
+LAUNCH
+
+cat > "$STAGE_DIR/bin/kali-i3-power-menu" <<'POWER_MENU'
+#!/usr/bin/env bash
+# Power menu, reached from the ⏻ button in the bar. Reboot and shut down ask a
+# second time, the way Kali's own panel button does, so a stray click cannot
+# take the VM down while something is running.
+set -euo pipefail
+
+confirm() {
+  local answer
+  answer=$(printf 'No\nYes\n' | rofi -dmenu -p "$1" -no-custom) || return 1
+  [[ "$answer" == Yes ]]
+}
+
+choice=$(printf 'Log out\nSuspend\nReboot\nShut down\n' |
+  rofi -dmenu -p 'Power' -no-custom) || exit 0
+
+case "$choice" in
+  'Log out')   confirm 'Log out of i3?'  && i3-msg exit ;;
+  Suspend)     systemctl suspend ;;
+  Reboot)      confirm 'Reboot now?'     && systemctl reboot ;;
+  'Shut down') confirm 'Shut down now?'  && systemctl poweroff ;;
+esac
+exit 0
+POWER_MENU
+
+cat > "$STAGE_DIR/bin/kali-i3-power-block" <<'POWER_BLOCK'
+#!/usr/bin/env bash
+if [[ "${BLOCK_BUTTON:-}" == 1 ]]; then
+  setsid -f "$HOME/.local/bin/kali-i3-power-menu" >/dev/null 2>&1
+fi
+printf '%s\n' '⏻'
+POWER_BLOCK
+
+cat > "$STAGE_DIR/bin/kali-i3-battery-block" <<'BATTERY_BLOCK'
+#!/usr/bin/env bash
+# Battery percentage for the bar.
+#
+# A VMware guest sees no battery unless the host is set to pass power status
+# through, and Kali in Fusion has none by default. Rather than show a fake 0%,
+# print nothing: i3blocks leaves out a block whose output is empty, so the item
+# simply appears once a battery exists.
+#
+# KALI_I3_POWER_SUPPLY exists so the formatting can be tested against a fake
+# sysfs tree; it defaults to the real one.
+shopt -s nullglob
+supply_dir=${KALI_I3_POWER_SUPPLY:-/sys/class/power_supply}
+
+for battery in "$supply_dir"/BAT*; do
+  [[ -r "$battery/capacity" ]] || continue
+  read -r percent < "$battery/capacity" || continue
+  [[ "$percent" =~ ^[0-9]+$ ]] || continue
+  state=
+  [[ -r "$battery/status" ]] && read -r state < "$battery/status"
+
+  # The label carries a % sign, so it is an argument to printf and never the
+  # format string: bash rejects "87%" as an unfinished conversion spec.
+  if [[ "$state" == Charging ]]; then
+    label="⚡ ${percent}%"
+  else
+    label="🔋 ${percent}%"
+  fi
+
+  # Quiet until it matters: amber under 30, phoenix red under 15.
+  if [[ "$state" != Charging && "$percent" -lt 15 ]]; then
+    printf '%s\n\n%s\n' "$label" '#d84962'
+  elif [[ "$state" != Charging && "$percent" -lt 30 ]]; then
+    printf '%s\n\n%s\n' "$label" '#d8a04a'
+  else
+    printf '%s\n' "$label"
+  fi
+  exit 0
+done
+exit 0
+BATTERY_BLOCK
+
+cat > "$STAGE_DIR/bin/kali-i3-code-block" <<'CODE_BLOCK'
+#!/usr/bin/env bash
+# Left click opens the editor tiled; Shift+left click or right click floats it.
+# On Kali /usr/bin/code is only a notice pointing at code-oss, so use code-oss.
+if [[ "${BLOCK_BUTTON:-}" == 1 || "${BLOCK_BUTTON:-}" == 3 ]]; then
+  if command -v code-oss >/dev/null 2>&1; then
+    mode=tile
+    if [[ "${BLOCK_BUTTON}" == 3 ]] || "$HOME/.local/bin/kali-i3-shift-held"; then
+      mode=float
+    fi
+    # --new-window: code-oss is single-instance, so without it a click only
+    # refocuses the existing window instead of opening another one.
+    setsid -f "$HOME/.local/bin/kali-i3-launch" "$mode" code \
+      code-oss --new-window >/dev/null 2>&1
+  elif command -v notify-send >/dev/null 2>&1; then
+    notify-send 'code-oss is not installed' 'Install it with: sudo apt install code-oss'
+  fi
+fi
+if command -v code-oss >/dev/null 2>&1; then
+  printf '\U0001F4BB\n'
+else
+  printf '\U0001F4BB\n\n#8d96a3\n'
+fi
+CODE_BLOCK
+
+cat > "$STAGE_DIR/bin/kali-i3-mousepad-block" <<'MOUSEPAD_BLOCK'
+#!/usr/bin/env bash
+# Left click opens Mousepad tiled; Shift+left click or right click floats it.
+if [[ "${BLOCK_BUTTON:-}" == 1 || "${BLOCK_BUTTON:-}" == 3 ]]; then
+  if command -v mousepad >/dev/null 2>&1; then
+    mode=tile
+    if [[ "${BLOCK_BUTTON}" == 3 ]] || "$HOME/.local/bin/kali-i3-shift-held"; then
+      mode=float
+    fi
+    # --disable-server: Mousepad is a single-instance GApplication, so without
+    # it a second click just refocuses the window that is already open.
+    setsid -f "$HOME/.local/bin/kali-i3-launch" "$mode" mousepad \
+      mousepad --disable-server >/dev/null 2>&1
+  elif command -v notify-send >/dev/null 2>&1; then
+    notify-send 'mousepad is not installed' 'Install it with: sudo apt install mousepad'
+  fi
+fi
+printf '\U0001F4DD\n'
+MOUSEPAD_BLOCK
+
+cat > "$STAGE_DIR/bin/kali-i3-flameshot-block" <<'FLAMESHOT_BLOCK'
+#!/usr/bin/env bash
+# Bar button for screenshots. Left click starts flameshot's region-capture GUI
+# (annotate, then copy or save); right click grabs the full screen straight to
+# the clipboard. flameshot also runs from the tray (started by
+# kali-i3-session-start), so the Print key and tray icon work the same way.
+if [[ "${BLOCK_BUTTON:-}" == 1 ]]; then
+  setsid -f flameshot gui >/dev/null 2>&1
+elif [[ "${BLOCK_BUTTON:-}" == 3 ]]; then
+  setsid -f flameshot full --clipboard >/dev/null 2>&1
+fi
+if command -v flameshot >/dev/null 2>&1; then
+  printf '\U0001F4F7\n'
+else
+  printf '\U0001F4F7\n\n#8d96a3\n'
+fi
+FLAMESHOT_BLOCK
+
+cat > "$STAGE_DIR/bin/kali-i3-obsidian-block" <<'OBSIDIAN_BLOCK'
+#!/usr/bin/env bash
+# Bar button for Obsidian (notes). Left click opens it tiled; Shift+left click or
+# right click floats it. 💎 is the closest glyph to Obsidian's crystal logo; the
+# i3bar is text-only and cannot render the PNG icon. Greyed out if not installed.
+if [[ "${BLOCK_BUTTON:-}" == 1 || "${BLOCK_BUTTON:-}" == 3 ]]; then
+  if [[ -x "$HOME/.local/bin/obsidian" ]]; then
+    mode=tile
+    if [[ "${BLOCK_BUTTON}" == 3 ]] || "$HOME/.local/bin/kali-i3-shift-held"; then
+      mode=float
+    fi
+    setsid -f "$HOME/.local/bin/kali-i3-launch" "$mode" obsidian \
+      "$HOME/.local/bin/obsidian" >/dev/null 2>&1
+  elif command -v notify-send >/dev/null 2>&1; then
+    notify-send 'Obsidian is not installed' 'Rerun the installer to add it.'
+  fi
+fi
+if [[ -x "$HOME/.local/bin/obsidian" ]]; then
+  printf '\U0001F48E\n'
+else
+  printf '\U0001F48E\n\n#8d96a3\n'
+fi
+OBSIDIAN_BLOCK
+
+cat > "$STAGE_DIR/bin/kali-i3-remmina-block" <<'REMMINA_BLOCK'
+#!/usr/bin/env bash
+# Bar button for Remmina (RDP). Left click opens it tiled; Shift+left click or
+# right click floats it. Greyed out if not installed.
+if [[ "${BLOCK_BUTTON:-}" == 1 || "${BLOCK_BUTTON:-}" == 3 ]]; then
+  if command -v remmina >/dev/null 2>&1; then
+    mode=tile
+    if [[ "${BLOCK_BUTTON}" == 3 ]] || "$HOME/.local/bin/kali-i3-shift-held"; then
+      mode=float
+    fi
+    setsid -f "$HOME/.local/bin/kali-i3-launch" "$mode" remmina \
+      remmina >/dev/null 2>&1
+  elif command -v notify-send >/dev/null 2>&1; then
+    notify-send 'remmina is not installed' 'Install it with: sudo apt install remmina'
+  fi
+fi
+if command -v remmina >/dev/null 2>&1; then
+  printf '\U0001F5A5\n'
+else
+  printf '\U0001F5A5\n\n#8d96a3\n'
+fi
+REMMINA_BLOCK
+
+cat > "$STAGE_DIR/bin/kali-i3-files-menu" <<'FILES_MENU'
+#!/usr/bin/env bash
+set -euo pipefail
+choice=$(printf 'Desktop\nDownloads\nHome\n' | rofi -dmenu -p 'Open folder') || exit 0
+case "$choice" in
+  Desktop) target="$HOME/Desktop" ;;
+  Downloads) target="$HOME/Downloads" ;;
+  Home) target="$HOME" ;;
+  *) exit 0 ;;
+esac
+mkdir -p -- "$target"
+exec thunar "$target"
+FILES_MENU
+
+cat > "$STAGE_DIR/bin/kali-i3-files-block" <<'FILES_BLOCK'
+#!/usr/bin/env bash
+if [[ "${BLOCK_BUTTON:-}" == 1 ]]; then
+  "$HOME/.local/bin/kali-i3-files-menu" >/dev/null 2>&1 &
+fi
+printf '📁\n'
+FILES_BLOCK
+
+cat > "$STAGE_DIR/bin/kali-i3-vpn-block" <<'VPN_BLOCK'
+#!/usr/bin/env bash
+tun0=$(ip -4 -o address show dev tun0 2>/dev/null | awk 'NR == 1 { sub(/\/.*/, "", $4); print $4 }')
+ts0=$(ip -4 -o address show dev tailscale0 2>/dev/null | awk 'NR == 1 { sub(/\/.*/, "", $4); print $4 }')
+# Left click copies tun0 if up, otherwise tailscale0.
+clip="${tun0:-$ts0}"
+if [[ "${BLOCK_BUTTON:-}" == 1 && -n "$clip" ]]; then
+  for selection in clipboard primary; do
+    printf '%s' "$clip" | setsid -f xclip -selection "$selection" >/dev/null 2>&1
+  done
+  if command -v notify-send >/dev/null 2>&1; then
+    notify-send 'VPN address copied' "$clip" >/dev/null 2>&1
+  fi
+fi
+vpn_part="${tun0:+VPN $tun0}"
+ts_part="${ts0:+TS $ts0}"
+[[ -z "$vpn_part" ]] && vpn_part='VPN ✗'
+[[ -z "$ts_part" ]] && ts_part='TS ✗'
+label="$vpn_part | $ts_part"
+if [[ -n "$tun0" || -n "$ts0" ]]; then
+  printf '%s\n\n#d84a62\n' "$label"
+else
+  printf '%s\n\n#87909b\n' "$label"
+fi
+VPN_BLOCK
+
+cat > "$STAGE_DIR/bin/kali-i3-terminal-theme" <<'TERMINAL_THEME'
+#!/usr/bin/env bash
+set -euo pipefail
+mode=${1:-opaque}
+case "$mode" in
+  transparent|opaque) ;;
+  *) printf 'Usage: kali-i3-terminal-theme [transparent|opaque]\n' >&2; exit 2 ;;
+esac
+
+set_preference() {
+  local property=$1 type=$2 value=$3
+  if xfconf-query -c xfce4-terminal -p "/$property" >/dev/null 2>&1; then
+    xfconf-query -c xfce4-terminal -p "/$property" -s "$value" >/dev/null
+  else
+    xfconf-query -c xfce4-terminal -p "/$property" -n -t "$type" -s "$value" >/dev/null
+  fi
+}
+
+set_preference color-use-theme bool false
+set_preference color-foreground string '#e1e5eb'
+set_preference color-background string '#090b11'
+set_preference color-cursor-use-default bool false
+set_preference color-cursor string '#ec5269'
+set_preference color-selection-use-default bool false
+set_preference color-selection string '#f5f5f7'
+set_preference color-selection-background string '#652236'
+# Standard vivid ANSI palette so tool output (feroxbuster, nmap, ls, ...) renders
+# the colours each tool intends. The slots keep the usual meaning (1 red, 2 green,
+# 3 yellow, ...); only the background below stays phoenix-dark.
+set_preference color-palette string '#1b1d23;#e0394f;#4fc470;#e0c045;#4a9ee0;#b36ae0;#3fc0c0;#d0d2d8;#5c6370;#ff5f6f;#6fe090;#ffd75f;#6fb8ff;#cf8aff;#5fe0e0;#ffffff'
+set_preference font-use-system bool false
+set_preference font-name string 'JetBrains Mono 10'
+set_preference custom-command string 'zsh -i'
+set_preference run-custom-command bool true
+set_preference title-initial string 'Black Ph03n1x terminal'
+set_preference title-mode string TERMINAL_TITLE_REPLACE
+set_preference misc-menubar-default bool false
+set_preference misc-toolbar-default bool false
+set_preference misc-borders-default bool true
+set_preference misc-always-show-tabs bool false
+# Don't warn on long/multiline pastes: this is a working pentest terminal where
+# pasting payloads and commands is routine, so the "unsafe paste" dialog is noise.
+set_preference misc-show-unsafe-paste-dialog bool false
+# Give every new terminal a slightly different background tint, so stacked
+# windows are easy to tell apart at a glance.
+set_preference color-background-vary bool true
+set_preference scrolling-bar string TERMINAL_SCROLLBAR_NONE
+mkdir -p "$HOME/Desktop"
+set_preference background-darkness double 0.60
+if [[ "$mode" == opaque ]]; then
+  set_preference background-mode string TERMINAL_BACKGROUND_SOLID
+else
+  set_preference background-mode string TERMINAL_BACKGROUND_TRANSPARENT
+fi
+TERMINAL_THEME
+
+cat > "$STAGE_DIR/bin/kali-i3-session-start" <<'SESSION_START'
+#!/usr/bin/env bash
+wallpaper="$HOME/.local/share/kali-i3-setup/phoenix-wallpaper.png"
+theme_helper="$HOME/.local/bin/kali-i3-terminal-theme"
+if [[ -f "$wallpaper" ]] && command -v feh >/dev/null 2>&1; then
+  feh --bg-fill "$wallpaper" >/dev/null 2>&1
+elif [[ -x "$HOME/.fehbg" ]]; then
+  "$HOME/.fehbg" >/dev/null 2>&1
+fi
+
+if [[ -f "$HOME/.config/kali-i3/disable-transparency" ]]; then
+  if command -v pkill >/dev/null 2>&1; then
+    pkill -u "$(id -u)" -x picom 2>/dev/null || true
+  fi
+  "$theme_helper" opaque >/dev/null 2>&1 || true
+else
+  # Opt-in only: even XRender can glitch on VMware virtual graphics.
+  compositor_ready=0
+  if command -v pgrep >/dev/null 2>&1 && pgrep -u "$(id -u)" -x picom >/dev/null 2>&1; then
+    compositor_ready=1
+  elif command -v picom >/dev/null 2>&1; then
+    picom --config "$HOME/.config/picom/picom.conf" >/dev/null 2>&1 &
+    picom_pid=$!
+    sleep 0.5
+    if kill -0 "$picom_pid" 2>/dev/null; then
+      compositor_ready=1
+    fi
+  fi
+  if [[ "$compositor_ready" -eq 1 ]]; then
+    "$theme_helper" transparent >/dev/null 2>&1 || true
+  else
+    "$theme_helper" opaque >/dev/null 2>&1 || true
+  fi
+fi
+
+# nm-applet (the Ethernet/network tray icon) is intentionally not started: the
+# NetworkManager service still runs, so connectivity is unaffected; manage
+# networks from the CLI with nmtui or nmcli if ever needed.
+if command -v flameshot >/dev/null 2>&1; then
+  # Runs headless (tray icon disabled in flameshot.ini); the 📷 bar button and
+  # the Print / $mod+Shift+s keys drive it.
+  flameshot >/dev/null 2>&1 &
+fi
+if command -v dunst >/dev/null 2>&1; then
+  dunst >/dev/null 2>&1 &
+fi
+if command -v lxpolkit >/dev/null 2>&1; then
+  lxpolkit >/dev/null 2>&1 &
+fi
+if command -v vmware-user-suid-wrapper >/dev/null 2>&1; then
+  vmware-user-suid-wrapper >/dev/null 2>&1 &
+fi
+SESSION_START
+
+cat > "$STAGE_DIR/config/terminal-title.sh" <<'TITLE_HOOK'
+# Sourced by interactive Bash and Zsh shells.
+case ":$PATH:" in
+  *":$HOME/.local/bin:"*) ;;
+  *) export PATH="$HOME/.local/bin:$PATH" ;;
+esac
+
+_kali_i3_emit_title() {
+  if [[ -n "${KALI_I3_TERMINAL_TITLE:-}" ]]; then
+    printf '\033]0;%s\007' "$KALI_I3_TERMINAL_TITLE"
+  fi
+}
+
+tn() {
+  local chosen
+  if [[ $# -eq 0 ]]; then
+    if [[ -n "${DISPLAY:-}" ]] && command -v rofi >/dev/null 2>&1; then
+      chosen=$(rofi -dmenu -p 'Rename this terminal' </dev/null) || return 0
+    else
+      printf 'Terminal name: ' >&2
+      IFS= read -r chosen || return 0
+    fi
+  else
+    chosen="$*"
+  fi
+  [[ -n "$chosen" ]] || return 0
+  KALI_I3_TERMINAL_TITLE="$chosen"
+  KALI_I3_TERMINAL_TITLE=${KALI_I3_TERMINAL_TITLE//$'\n'/ }
+  KALI_I3_TERMINAL_TITLE=${KALI_I3_TERMINAL_TITLE//$'\r'/ }
+  KALI_I3_TERMINAL_TITLE=${KALI_I3_TERMINAL_TITLE//$'\e'/}
+  KALI_I3_TERMINAL_TITLE=${KALI_I3_TERMINAL_TITLE//$'\a'/}
+  export KALI_I3_TERMINAL_TITLE
+  _kali_i3_emit_title
+}
+
+if [[ -n "${ZSH_VERSION:-}" ]]; then
+  # Kali's stock precmd normally restores a user@host title on every prompt.
+  TERM_TITLE=''
+  RPROMPT=''
+  if [[ -z "${KALI_I3_TERMINAL_TITLE:-}" ]]; then
+    _phoenix_tty=$(tty 2>/dev/null) || _phoenix_tty=''
+    case "$_phoenix_tty" in
+      /dev/pts/*) KALI_I3_TERMINAL_TITLE="Black Ph03n1x pts/${_phoenix_tty##*/}" ;;
+      *) KALI_I3_TERMINAL_TITLE='Black Ph03n1x terminal' ;;
+    esac
+    unset _phoenix_tty
+  fi
+  autoload -Uz add-zsh-hook
+  add-zsh-hook precmd _kali_i3_emit_title
+
+  _phoenix_prompt_update() {
+    emulate -L zsh
+    local stamp vpn vpn_color
+    stamp=$(LC_ALL=C date -u '+%Y-%m-%d %H:%M:%S UTC')
+    vpn=$(ip -4 -o address show dev tun0 2>/dev/null |
+      awk 'NR == 1 { sub(/\/.*/, "", $4); print $4 }')
+    if [[ -n "$vpn" ]]; then
+      vpn_color='#d84962'
+    else
+      vpn=offline
+      vpn_color='#8d96a3'
+    fi
+    # Two-line Black Ph03n1x prompt: report evidence on the top line (UTC stamp and
+    # tun0 address, so every screenshot carries them), and the full terminal
+    # width for commands on the bottom line. The arrow turns bright red when
+    # the previous command exited non-zero.
+    PROMPT="%F{#7c2740}╭─%f %B%F{#dbe1e8}${stamp}%f%b %F{#7c2740}──%f %F{#8d96a3}tun0%f %F{${vpn_color}}${vpn}%f %F{#7c2740}──%f %F{#739fbd}%~%f
+%F{#7c2740}╰─%f%B%(?.%F{#f06a80}.%F{#ff4d4d})❯%f%b "
+  }
+  add-zsh-hook precmd _phoenix_prompt_update
+  _phoenix_prompt_update
+elif [[ -n "${BASH_VERSION:-}" ]]; then
+  if declare -p PROMPT_COMMAND 2>/dev/null | grep -q 'declare -a'; then
+    PROMPT_COMMAND+=(_kali_i3_emit_title)
+  elif [[ "${PROMPT_COMMAND:-}" != *'_kali_i3_emit_title'* ]]; then
+    PROMPT_COMMAND="${PROMPT_COMMAND:+$PROMPT_COMMAND;}_kali_i3_emit_title"
+  fi
+fi
+TITLE_HOOK
+
+progress 'Installing desktop, bar and helpers'
+say 'Checking the generated configuration before installing it.'
+i3 -C -c "$STAGE_DIR/config/i3-config" || die 'Generated i3 configuration is invalid.'
+# Kali's current Rofi build may crash in its headless config-validation path.
+# The fixed RASI file above follows upstream's documented configuration syntax;
+# test the launcher interactively in the i3 session instead.
+for helper in "$STAGE_DIR"/bin/* "$STAGE_DIR/config/terminal-title.sh"; do
+  bash -n "$helper" || die "Shell syntax failed: $helper"
+done
+zsh -n "$STAGE_DIR/config/terminal-title.sh" || die 'Black Ph03n1x Zsh prompt syntax failed.'
+if [[ -s "$WALLPAPER_SOURCE" ]]; then
+  install -m 0644 "$WALLPAPER_SOURCE" "$STAGE_DIR/config/phoenix-wallpaper.png"
+  say 'Using the Black Ph03n1x wallpaper from black_phoenix.png.'
+else
+  rsvg-convert -w 2560 -h 1600 -o "$STAGE_DIR/config/phoenix-wallpaper.png" \
+    "$STAGE_DIR/config/phoenix-wallpaper.svg" || die 'Fallback wallpaper could not be rendered.'
+  say 'black_phoenix.png not found on the Desktop or beside this script; using the built-in dark wallpaper.'
+fi
+[[ -s "$STAGE_DIR/config/phoenix-wallpaper.png" ]] || die 'Black Ph03n1x wallpaper is empty.'
+
+BACKUP_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/kali-i3-setup/backups/$(date -u +%Y%m%dT%H%M%SZ)-$$"
+mkdir -p "$BACKUP_DIR"
+backup_one "$HOME/.config/i3/config"
+backup_one "$HOME/.config/rofi/config.rasi"
+backup_one "$HOME/.config/i3blocks/config"
+backup_one "$HOME/.config/picom/picom.conf"
+backup_one "$HOME/.config/feroxbuster/ferox-config.toml"
+backup_one "$HOME/.config/flameshot/flameshot.ini"
+backup_one "$HOME/.config/kali-i3/terminal-title.sh"
+backup_one "$HOME/.config/kali-i3/disable-transparency"
+backup_one "$HOME/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-terminal.xml"
+backup_one "$HOME/.config/xfce4/terminal/accels.scm"
+backup_one "$HOME/.local/share/kali-i3-setup/phoenix-wallpaper.svg"
+backup_one "$HOME/.local/share/kali-i3-setup/phoenix-wallpaper.png"
+if command -v xfconf-query >/dev/null 2>&1; then
+  xfconf-query -c xfce4-terminal -lv > "$BACKUP_DIR/xfce4-terminal.properties" 2>/dev/null || true
+fi
+for helper in "$STAGE_DIR"/bin/*; do
+  backup_one "$HOME/.local/bin/$(basename "$helper")"
+done
+
+mkdir -p "$HOME/.config/i3" "$HOME/.config/rofi" "$HOME/.config/i3blocks" \
+  "$HOME/.config/kali-i3" "$HOME/.config/picom" "$HOME/.local/bin" \
+  "$HOME/.local/share/kali-i3-setup" "$HOME/.config/xfce4/terminal" \
+  "$HOME/.config/feroxbuster" "$HOME/.config/flameshot"
+for helper in "$STAGE_DIR"/bin/*; do
+  install -m 0755 "$helper" "$HOME/.local/bin/$(basename "$helper")"
+done
+install -m 0644 "$STAGE_DIR/config/rofi-config.rasi" "$HOME/.config/rofi/config.rasi"
+install -m 0644 "$STAGE_DIR/config/i3blocks-config" "$HOME/.config/i3blocks/config"
+install -m 0644 "$STAGE_DIR/config/picom.conf" "$HOME/.config/picom/picom.conf"
+install -m 0644 "$STAGE_DIR/config/ferox-config.toml" "$HOME/.config/feroxbuster/ferox-config.toml"
+install -m 0644 "$STAGE_DIR/config/flameshot.ini" "$HOME/.config/flameshot/flameshot.ini"
+install -m 0644 "$STAGE_DIR/config/terminal-accels.scm" "$HOME/.config/xfce4/terminal/accels.scm"
+install -m 0644 "$STAGE_DIR/config/terminal-title.sh" "$HOME/.config/kali-i3/terminal-title.sh"
+install -m 0644 "$STAGE_DIR/config/i3-config" "$HOME/.config/i3/config"
+install -m 0644 "$STAGE_DIR/config/phoenix-wallpaper.svg" "$HOME/.local/share/kali-i3-setup/phoenix-wallpaper.svg"
+install -m 0644 "$STAGE_DIR/config/phoenix-wallpaper.png" "$HOME/.local/share/kali-i3-setup/phoenix-wallpaper.png"
+append_shell_hook "$HOME/.zshrc"
+append_shell_hook "$HOME/.bashrc"
+DESKTOP_INSTALLED=1
+say "Black Ph03n1x desktop configuration installed. Backups: $BACKUP_DIR"
+
+install_arm64_donut() {
+  local index_dir index_file bundle_dir package_name record package_path package_sha
+  local deb_file package_arch loader libc_dir help_text
+  index_dir="$STAGE_DIR/amd64-packages"
+  bundle_dir="$STAGE_DIR/donut-amd64"
+  mkdir -p "$index_dir" "$bundle_dir"
+  index_file="$index_dir/Packages.gz"
+  say 'Downloading the current Kali amd64 package index for Donut.'
+  curl --fail --location --retry 3 --output "$index_file" \
+    "$KALI_MIRROR/dists/kali-rolling/main/binary-amd64/Packages.gz"
+
+  for package_name in donut libc6; do
+    record=$(python3 - "$index_file" "$package_name" <<'PY'
+import gzip
+import sys
+
+index_path, wanted = sys.argv[1:]
+entry = {}
+with gzip.open(index_path, 'rt', encoding='utf-8') as index:
+    for line in index:
+        line = line.rstrip('\n')
+        if not line:
+            if entry.get('Package') == wanted and entry.get('Architecture') == 'amd64':
+                print(entry['Filename'], entry['SHA256'])
+                break
+            entry = {}
+        elif not line[0].isspace() and ': ' in line:
+            key, value = line.split(': ', 1)
+            entry[key] = value
+    else:
+        if entry.get('Package') == wanted and entry.get('Architecture') == 'amd64':
+            print(entry['Filename'], entry['SHA256'])
+        else:
+            raise SystemExit(f'{wanted}:amd64 not found in Kali package index')
+PY
+    ) || die "Could not locate $package_name:amd64 in the Kali index."
+    read -r package_path package_sha <<< "$record"
+    [[ "$package_path" == pool/* ]] || die "Unexpected package path for $package_name."
+    [[ "$package_sha" =~ ^[0-9a-fA-F]{64}$ ]] || die "Invalid checksum for $package_name."
+    deb_file="$index_dir/${package_path##*/}"
+    say "Downloading $package_name:amd64."
+    curl --fail --location --retry 3 --output "$deb_file" "$KALI_MIRROR/$package_path"
+    printf '%s  %s\n' "$package_sha" "$deb_file" | sha256sum --check --status ||
+      die "Checksum failed for $package_name:amd64."
+    package_arch=$(dpkg-deb -f "$deb_file" Architecture)
+    [[ "$package_arch" == amd64 ]] || die "Wrong package architecture: $package_arch."
+    dpkg-deb -x "$deb_file" "$bundle_dir"
+  done
+
+  loader=$(find "$bundle_dir" -type f -name ld-linux-x86-64.so.2 -print -quit)
+  [[ -n "$loader" && -x "$bundle_dir/usr/bin/donut" ]] ||
+    die 'The private Donut bundle is missing its binary or amd64 loader.'
+  libc_dir=$(dirname "$loader")
+  help_text=$(qemu-x86_64 "$loader" --inhibit-cache --library-path "$libc_dir" \
+    "$bundle_dir/usr/bin/donut" -h 2>&1) || true
+  [[ "$help_text" == *'usage: donut'* ]] || die "Donut failed under QEMU: $help_text"
+
+  local final_bundle="$HOME/.local/share/kali-i3-setup/donut-amd64"
+  mkdir -p "$(dirname "$final_bundle")"
+  if [[ -e "$final_bundle" ]]; then
+    mv -- "$final_bundle" "$BACKUP_DIR/donut-amd64"
+  fi
+  mv -- "$bundle_dir" "$final_bundle"
+  backup_one "$HOME/.local/bin/donut"
+  cat > "$STAGE_DIR/bin/donut" <<'DONUT_WRAPPER'
+#!/usr/bin/env bash
+set -euo pipefail
+bundle="$HOME/.local/share/kali-i3-setup/donut-amd64"
+loader=$(find "$bundle" -type f -name ld-linux-x86-64.so.2 -print -quit)
+[[ -n "$loader" && -x "$bundle/usr/bin/donut" ]] || {
+  printf 'Donut private runtime is missing. Rerun the installer.\n' >&2
+  exit 1
+}
+exec qemu-x86_64 "$loader" --inhibit-cache --library-path "$(dirname "$loader")" \
+  "$bundle/usr/bin/donut" "$@"
+DONUT_WRAPPER
+  bash -n "$STAGE_DIR/bin/donut"
+  install -m 0755 "$STAGE_DIR/bin/donut" "$HOME/.local/bin/donut"
+  say 'Donut CLI installed in ~/.local/bin/donut and tested with -h.'
+}
+
+install_arm64_veil() {
+  # Veil (AV-evasion payload generator) has no arm64 build, and unlike Donut its
+  # own dependency chain (Wine, Metasploit, Mono, mingw-w64, a GitHub-hosted
+  # dependency bundle) is too deep to hand-extract like a single binary. Instead
+  # a real amd64 Kali container runs it under qemu's binfmt_misc handler
+  # (registered on the host by the qemu-user-binfmt package above), so `apt
+  # install veil` inside the container resolves its dependencies the normal way.
+  if command -v veil >/dev/null 2>&1; then
+    say 'Veil is already installed; skipping.'
+    return 0
+  fi
+
+  command -v docker >/dev/null 2>&1 || die 'docker.io did not install correctly.'
+  sudo systemctl enable --now docker >/dev/null 2>&1 ||
+    die 'Could not start the docker service.'
+
+  local this_user
+  this_user=$(id -un)
+  if ! id -nG "$this_user" | grep -qw docker; then
+    sudo usermod -aG docker "$this_user"
+    say 'Added you to the docker group (needed to run `docker` without sudo). Log out and back in, or run `newgrp docker`, for that to take effect.'
+  fi
+  # The group just added above only applies to future logins, not this already-
+  # running shell, so every docker call made by this function itself goes through
+  # sudo rather than relying on group membership it cannot have yet.
+  dkr() { sudo docker "$@"; }
+
+  # Some DNS resolvers (notably some VPN/corporate ones) send responses dockerd's
+  # pure-Go resolver rejects even though glibc accepts them, which makes image
+  # pulls fail with "no such host" despite the host's own DNS working fine.
+  # Forcing the cgo (glibc) resolver avoids that; it is a strict improvement.
+  local dns_fix_dir=/etc/systemd/system/docker.service.d
+  local dns_fix_file="$dns_fix_dir/ignite-dns-fix.conf"
+  if [[ ! -f "$dns_fix_file" ]]; then
+    sudo mkdir -p "$dns_fix_dir"
+    printf '[Service]\nEnvironment="GODEBUG=netdns=cgo"\n' | sudo tee "$dns_fix_file" >/dev/null
+    sudo systemctl daemon-reload
+    sudo systemctl restart docker
+  fi
+
+  if dkr ps -a --format '{{.Names}}' 2>/dev/null | grep -qx veil-box; then
+    say 'veil-box container already exists; reusing it.'
+    dkr start veil-box >/dev/null 2>&1 || true
+  else
+    say 'Pulling an amd64 Kali image and creating the veil-box container (this runs emulated; it is slow).'
+    local veil_output="$HOME/.local/share/kali-i3-setup/veil-output"
+    mkdir -p "$veil_output"
+    dkr run -d --platform linux/amd64 --name veil-box --hostname veil-box \
+      --restart unless-stopped -v "$veil_output:/var/lib/veil/output" \
+      kalilinux/kali-rolling sleep infinity ||
+      die 'Could not create the veil-box container.'
+
+    # Pin the container to the main Kali redirector so apt doesn't land on a
+    # flaky geographic mirror that is unreachable from inside Docker.
+    dkr exec veil-box bash -c \
+      'echo "deb http://http.kali.org/kali kali-rolling main non-free non-free-firmware contrib" > /etc/apt/sources.list'
+
+    say 'Installing Veil inside veil-box (apt, under emulation — this takes a while).'
+    dkr exec veil-box bash -c 'apt-get -qq update && DEBIAN_FRONTEND=noninteractive apt-get install -yqq veil xvfb lftp' ||
+      die 'Failed to install veil inside veil-box.'
+
+    say 'Running Veil''s own setup (Wine/Python/Go) inside veil-box.'
+    dkr exec veil-box bash -c 'xvfb-run /usr/share/veil/config/setup.sh --force --silent' || true
+    # The Ruby 1.8.7 and AutoIT installers are old 32-bit NSIS binaries that fail
+    # to load under this nested qemu+Wine emulation (unrelated to arm64 itself);
+    # Veil only hard-requires their files to *exist* at startup, so stub them.
+    # Python/C/PowerShell/Go payloads are unaffected; Ruby/AutoIT payloads are not usable.
+    dkr exec veil-box bash -c '
+      mkdir -p "/var/lib/veil/wine/drive_c/Ruby187/bin" \
+               "/var/lib/veil/wine/drive_c/Program Files/AutoIt3/Aut2Exe"
+      touch "/var/lib/veil/wine/drive_c/Ruby187/bin/ruby.exe" \
+            "/var/lib/veil/wine/drive_c/Program Files/AutoIt3/Aut2Exe/Aut2exe.exe"
+    '
+    # Veil writes payloads as root inside the container; reclaim the bind mount
+    # so generated files are owned by the normal user, not root.
+    sudo chown -R "$this_user:$this_user" "$veil_output"
+  fi
+
+  local version_text
+  version_text=$(dkr exec veil-box veil --version 2>&1) || true
+  [[ "$version_text" == *'Veil'* ]] || die "Veil failed to start in veil-box: $version_text"
+
+  cat > "$STAGE_DIR/bin/veil" <<'VEIL_WRAPPER'
+#!/usr/bin/env bash
+# Runs Veil (amd64 Kali container, emulated via qemu binfmt) from the arm64 host.
+if docker exec -it veil-box veil "$@" 2>/tmp/.veil-wrapper-err; then
+  exit 0
+fi
+if grep -q 'permission denied' /tmp/.veil-wrapper-err 2>/dev/null; then
+  rm -f /tmp/.veil-wrapper-err
+  exec sudo docker exec -it veil-box veil "$@"
+fi
+cat /tmp/.veil-wrapper-err >&2
+rm -f /tmp/.veil-wrapper-err
+exit 1
+VEIL_WRAPPER
+  bash -n "$STAGE_DIR/bin/veil"
+  sudo install -m 0755 "$STAGE_DIR/bin/veil" /usr/local/bin/veil
+  say 'Veil installed. Run `veil`; output lands in ~/.local/share/kali-i3-setup/veil-output/.'
+}
+
+install_arm64_shellter() {
+  # Shellter (PE injection tool) is amd64-only in Kali repos, and runs under Wine.
+  # It reuses the veil-box container that install_arm64_veil() already created.
+  if command -v shellter >/dev/null 2>&1; then
+    say 'Shellter is already installed; skipping.'
+    return 0
+  fi
+
+  dkr() { sudo docker "$@"; }
+
+  if ! dkr ps -a --format '{{.Names}}' 2>/dev/null | grep -qx veil-box; then
+    die 'veil-box container does not exist. Shellter requires the Veil container (do not use --skip-veil).'
+  fi
+  dkr start veil-box >/dev/null 2>&1 || true
+
+  if ! dkr exec veil-box dpkg-query -W shellter >/dev/null 2>&1; then
+    say 'Installing Shellter inside veil-box.'
+    dkr exec veil-box bash -c \
+      'dpkg --add-architecture i386 && apt-get -qq update && DEBIAN_FRONTEND=noninteractive apt-get install -yqq shellter wine32:i386' ||
+      die 'Failed to install shellter inside veil-box.'
+  fi
+
+  cat > "$STAGE_DIR/bin/shellter" <<'SHELLTER_WRAPPER'
+#!/usr/bin/env bash
+# Runs Shellter (amd64 Kali container, emulated via qemu binfmt) from the arm64 host.
+# Shellter is interactive (Wine console app) and needs a virtual framebuffer.
+# WINEDEBUG=-all silences harmless Wine diagnostic noise (OLE, setupapi, winebth).
+if docker exec -it -e WINEDEBUG=-all veil-box xvfb-run -a shellter "$@" 2>/tmp/.shellter-wrapper-err; then
+  exit 0
+fi
+if grep -q 'permission denied' /tmp/.shellter-wrapper-err 2>/dev/null; then
+  rm -f /tmp/.shellter-wrapper-err
+  exec sudo docker exec -it -e WINEDEBUG=-all veil-box xvfb-run -a shellter "$@"
+fi
+cat /tmp/.shellter-wrapper-err >&2
+rm -f /tmp/.shellter-wrapper-err
+exit 1
+SHELLTER_WRAPPER
+  bash -n "$STAGE_DIR/bin/shellter"
+  sudo install -m 0755 "$STAGE_DIR/bin/shellter" /usr/local/bin/shellter
+  say 'Shellter installed. Run `shellter` to inject payloads into PE executables.'
+}
+
+install_obsidian() {
+  # Obsidian is proprietary and not in the Kali repos. The vendor ships an amd64
+  # .deb but NO arm64 .deb, so the portable AppImage (published for both arches)
+  # is used uniformly: download the latest, extract it once (no FUSE needed), and
+  # run its AppRun through a small wrapper. Electron's system libraries come in as
+  # dependencies of code-oss, which this script already installs.
+  local arch=$1 api_json url appimage extract_dir dest icon
+  dest="$HOME/.local/share/kali-i3-setup/obsidian"
+  if [[ -x "$dest/AppRun" && -x "$HOME/.local/bin/obsidian" ]]; then
+    say 'Obsidian is already installed; skipping its download. Delete it to force a reinstall.'
+    return 0
+  fi
+  say 'Installing Obsidian from the official AppImage.'
+  api_json=$(curl -fsSL --max-time 30 \
+    https://api.github.com/repos/obsidianmd/obsidian-releases/releases/latest) ||
+    { say 'Obsidian: could not reach the GitHub release API; skipping.'; return 1; }
+  if [[ "$arch" == arm64 ]]; then
+    url=$(printf '%s\n' "$api_json" | grep -oE 'https://[^"]*-arm64\.AppImage' | head -1)
+  else
+    url=$(printf '%s\n' "$api_json" | grep -oE 'https://[^"]*\.AppImage' | grep -v arm64 | head -1)
+  fi
+  [[ -n "$url" ]] || { say "Obsidian: no AppImage asset for $arch; skipping."; return 1; }
+  extract_dir="$STAGE_DIR/obsidian"
+  mkdir -p "$extract_dir"
+  appimage="$extract_dir/Obsidian.AppImage"
+  say "Downloading ${url##*/} (~130 MB)."
+  curl -fL --retry 3 --max-time 600 -o "$appimage" "$url" ||
+    { say 'Obsidian: download failed; skipping.'; return 1; }
+  chmod +x "$appimage"
+  ( cd "$extract_dir" && "$appimage" --appimage-extract >/dev/null 2>&1 ) ||
+    { say 'Obsidian: AppImage extraction failed; skipping.'; return 1; }
+  [[ -x "$extract_dir/squashfs-root/AppRun" ]] ||
+    { say 'Obsidian: extracted bundle is missing AppRun; skipping.'; return 1; }
+  mkdir -p "$(dirname "$dest")"
+  if [[ -e "$dest" ]]; then
+    rm -rf "$BACKUP_DIR/obsidian" 2>/dev/null || true
+    mv -- "$dest" "$BACKUP_DIR/obsidian"
+  fi
+  mv -- "$extract_dir/squashfs-root" "$dest"
+  icon="$dest/obsidian.png"
+  backup_one "$HOME/.local/bin/obsidian"
+  cat > "$STAGE_DIR/bin/obsidian" <<'OBS_WRAPPER'
+#!/usr/bin/env bash
+# chrome-sandbox is not SUID for an unprivileged, user-extracted AppImage, so
+# --no-sandbox is required here; acceptable for a local notes application.
+exec "$HOME/.local/share/kali-i3-setup/obsidian/AppRun" --no-sandbox "$@"
+OBS_WRAPPER
+  bash -n "$STAGE_DIR/bin/obsidian" ||
+    { say 'Obsidian: wrapper failed its syntax check; skipping.'; return 1; }
+  install -m 0755 "$STAGE_DIR/bin/obsidian" "$HOME/.local/bin/obsidian"
+  backup_one "$HOME/.local/share/applications/obsidian.desktop"
+  mkdir -p "$HOME/.local/share/applications"
+  cat > "$HOME/.local/share/applications/obsidian.desktop" <<OBS_DESKTOP
+[Desktop Entry]
+Type=Application
+Name=Obsidian
+Comment=Markdown knowledge base / notes
+Exec=$HOME/.local/bin/obsidian %u
+Icon=$icon
+Terminal=false
+Categories=Office;Utility;
+MimeType=x-scheme-handler/obsidian;
+StartupWMClass=obsidian
+OBS_DESKTOP
+  command -v update-desktop-database >/dev/null 2>&1 &&
+    update-desktop-database "$HOME/.local/share/applications" >/dev/null 2>&1 || true
+  say 'Obsidian installed. Launch it from Rofi (Super+d) or the 💎 bar button.'
+}
+
+provision_obsidian_vault() {
+  # Pre-create a ready-to-use Obsidian vault at ~/Documents/$USER_NAME and register
+  # it so Obsidian opens straight into it. Everything here is idempotent and
+  # non-destructive: JSON is merged (never overwritten), existing notes are left
+  # alone, and only our own snippet file is written outright. The snippet hides
+  # image files (pasted screenshots) from the File Explorer; notes still render
+  # them inline.
+  local vault cfgdir
+  vault="$HOME/Documents/$USER_NAME"
+  cfgdir="$vault/.obsidian"
+  mkdir -p "$cfgdir/snippets"
+  cat > "$cfgdir/snippets/hide-images.css" <<'CSS'
+/* Hide pasted/attached image files from the File Explorer pane.
+   Images still display inside notes; only the explorer rows are hidden.
+   Case-insensitive so .PNG / .png both match. */
+.nav-file:has(> .nav-file-title[data-path$=".png" i]),
+.nav-file:has(> .nav-file-title[data-path$=".jpg" i]),
+.nav-file:has(> .nav-file-title[data-path$=".jpeg" i]),
+.nav-file:has(> .nav-file-title[data-path$=".gif" i]),
+.nav-file:has(> .nav-file-title[data-path$=".webp" i]),
+.nav-file:has(> .nav-file-title[data-path$=".bmp" i]),
+.nav-file:has(> .nav-file-title[data-path$=".svg" i]) {
+  display: none;
+}
+CSS
+  # Enable the snippet (merge into any existing appearance.json).
+  python3 -I - "$cfgdir/appearance.json" <<'PY' || { say 'Obsidian vault: could not enable the snippet.'; return 1; }
+import json, os, sys
+path = sys.argv[1]
+data = {}
+if os.path.exists(path):
+    try:
+        with open(path) as handle:
+            data = json.load(handle)
+    except Exception:
+        data = {}
+snippets = data.get("enabledCssSnippets") or []
+if "hide-images" not in snippets:
+    snippets.append("hide-images")
+data["enabledCssSnippets"] = snippets
+with open(path, "w") as handle:
+    json.dump(data, handle, indent=2)
+PY
+  # Register the vault so Obsidian opens it on launch (merge; keep other vaults).
+  mkdir -p "$HOME/.config/obsidian"
+  python3 -I - "$HOME/.config/obsidian/obsidian.json" "$vault" <<'PY' || { say 'Obsidian vault: could not register it; pick it from the vault switcher instead.'; return 1; }
+import json, os, secrets, sys, time
+path, vault = sys.argv[1], sys.argv[2]
+data = {}
+if os.path.exists(path):
+    try:
+        with open(path) as handle:
+            data = json.load(handle)
+    except Exception:
+        data = {}
+vaults = data.setdefault("vaults", {})
+for info in vaults.values():
+    if info.get("path") == vault:
+        info["open"] = True
+        break
+else:
+    vaults[secrets.token_hex(8)] = {"path": vault, "ts": int(time.time() * 1000), "open": True}
+with open(path, "w") as handle:
+    json.dump(data, handle)
+PY
+  # --- Community plugins, from each project's official GitHub release. ---
+  # Non-fatal: a download failure just skips that plugin (install it later from
+  # Settings -> Community plugins). Already-installed plugins are left untouched.
+  # On first launch Obsidian may still ask to turn Community plugins on once.
+  mkdir -p "$cfgdir/plugins"
+  _install_obsidian_plugin() {  # usage: _install_obsidian_plugin <id> <owner/repo>
+    local id=$1 repo=$2 dir="$cfgdir/plugins/$1" tmp rel asset url
+    [[ -s "$dir/main.js" && -s "$dir/manifest.json" ]] && return 0  # already present
+    tmp=$(mktemp -d)
+    rel=$(curl -fsSL --max-time 30 "https://api.github.com/repos/$repo/releases/latest") ||
+      { rm -rf "$tmp"; return 1; }
+    for asset in manifest.json main.js styles.css; do
+      url=$(printf '%s\n' "$rel" | grep -oE "https://[^\"]*/download/[^\"]*/$asset" | head -1)
+      [[ -n "$url" ]] && curl -fsSL --max-time 180 -o "$tmp/$asset" "$url"
+    done
+    [[ -s "$tmp/main.js" && -s "$tmp/manifest.json" ]] || { rm -rf "$tmp"; return 1; }
+    rm -rf "$dir"; mkdir -p "$dir"; mv "$tmp"/* "$dir"/; rm -rf "$tmp"
+  }
+  local plugin_specs spec pid prepo enable_ids
+  plugin_specs=(
+    "dataview blacksmithgu/obsidian-dataview"
+    "table-editor-obsidian tgrosinger/advanced-tables-obsidian"
+    "obsidian-excalidraw-plugin zsviczian/obsidian-excalidraw-plugin"
+    "templater-obsidian SilentVoid13/Templater"
+    "obsidian-kanban mgmeyers/obsidian-kanban"
+    "code-styler mayurankv/Obsidian-Code-Styler"
+  )
+  enable_ids=()
+  for spec in "${plugin_specs[@]}"; do
+    pid=${spec%% *}; prepo=${spec#* }
+    if _install_obsidian_plugin "$pid" "$prepo"; then
+      enable_ids+=("$pid")
+    else
+      say "Obsidian plugin skipped (download failed): $pid"
+    fi
+  done
+  if [[ ${#enable_ids[@]} -gt 0 ]]; then
+    python3 -I - "$cfgdir/community-plugins.json" "${enable_ids[@]}" <<'PY' || say 'Obsidian: could not enable the plugins automatically.'
+import json, os, sys
+path = sys.argv[1]; wanted = sys.argv[2:]
+data = []
+if os.path.exists(path):
+    try:
+        with open(path) as handle:
+            data = json.load(handle)
+    except Exception:
+        data = []
+if not isinstance(data, list):
+    data = []
+for pid in wanted:
+    if pid not in data:
+        data.append(pid)
+with open(path, "w") as handle:
+    json.dump(data, handle, indent=2)
+PY
+    say "Obsidian plugins ready: ${enable_ids[*]}"
+  fi
+
+  # --- Starter AD engagement template. Only writes files that are absent, so it
+  # never clobbers notes you have already edited. ---
+  mkdir -p "$vault/Templates" "$vault/Engagements/AD Lab"
+  if [[ ! -f "$vault/Templates/AD Host.md" ]]; then
+    cat > "$vault/Templates/AD Host.md" <<'HOST_MD'
+---
+host: <HOSTNAME>
+ip: <IP>
+role: <Member Server | Domain Controller | Workstation>
+os:
+domain:
+owned: false
+tags: [host, ad]
+---
+# <HOSTNAME> — <IP>
+
+> [!info] Host
+> **Role:** <role> · **OS:** <os> · **Domain:** <domain>
+
+## Services (nmap)
+| Port | Proto | Service | Version | Notes |
+|------|-------|---------|---------|-------|
+|      | tcp   |         |         |       |
+
+## Enumeration
+### SMB / shares
+
+### LDAP / AD (users, groups, SPNs)
+
+### Web
+
+### Other
+
+## Credentials found here
+| User | Secret (pass/NTLM) | Source | Valid on |
+|------|--------------------|--------|----------|
+|      |                    |        |          |
+
+## Vulnerabilities
+-
+
+## Exploitation
+### Initial access
+
+### Commands run
+```bash
+
+```
+
+## Post-exploitation
+### Local privilege escalation
+
+### Loot (files, tickets, hashes, flags)
+
+## Lateral movement FROM this host
+- target → technique → credential used
+
+## Cleanup
+- [ ] artifacts removed
+HOST_MD
+  fi
+  local host role
+  for host in MS01 MS02 DC01; do
+    [[ -f "$vault/Engagements/AD Lab/$host.md" ]] && continue
+    role="Member Server"; [[ "$host" == DC01 ]] && role="Domain Controller"
+    sed -e "s/<HOSTNAME>/$host/g" \
+        -e "s/<Member Server | Domain Controller | Workstation>/$role/" \
+        -e "s/<role>/$role/" \
+        "$vault/Templates/AD Host.md" > "$vault/Engagements/AD Lab/$host.md"
+  done
+  if [[ ! -f "$vault/Engagements/AD Lab/00 - Overview.md" ]]; then
+    cat > "$vault/Engagements/AD Lab/00 - Overview.md" <<'OVERVIEW_MD'
+---
+engagement: AD Lab
+tags: [engagement, ad]
+---
+# AD Lab — Overview
+
+> [!abstract] Domain
+> **Domain:** `` · **Forest:** `` · **Functional level:**
+
+## Hosts
+| Host | IP | Role | Foothold | Owned |
+|------|----|------|----------|-------|
+| [[MS01]] | 192.168.X.X | Member Server | 🔲 | 🔲 |
+| [[MS02]] | 192.168.X.X | Member Server | 🔲 | 🔲 |
+| [[DC01]] | 192.168.X.X | Domain Controller | 🔲 | 🔲 |
+
+## Credentials (master list)
+| User | Domain | Secret (pass/NTLM) | Type | Valid on | Source |
+|------|--------|--------------------|------|----------|--------|
+|      |        |                    |      |          |        |
+
+## Attack path
+1.
+2.
+3.
+
+> [!tip] Draw it
+> Excalidraw is installed: Ctrl+P -> "Excalidraw: Create new drawing", then embed
+> the MS01 -> MS02 -> DC01 path here with ![[drawing name]].
+
+## Objectives
+- [ ] Local user on MS01 / MS02 / DC01
+- [ ] Domain user creds
+- [ ] Domain Admin / DC01 SYSTEM
+- [ ] Loot: NTDS.dit / krbtgt
+
+---
+### Optional: auto host table (Dataview, installed)
+```dataview
+TABLE ip AS IP, role AS Role, owned AS Owned
+FROM #host
+SORT role DESC
+```
+OVERVIEW_MD
+  fi
+
+  say "Obsidian vault ready at $vault (hidden images, AD template, plugins)."
+}
+
+install_tlogger() {
+  mkdir -p "$HOME/Desktop/logs"
+  backup_one "$HOME/.config/kali-i3/tlogger.sh"
+  cat > "$STAGE_DIR/config/tlogger.sh" <<'TLOGGER_SH'
+# TLoggerV3.1 — Black Ph03n1x terminal session logger.
+# Sourced by zsh. Commands: tl_start, tl_stop, tl_status, tl_auto.
+
+
+export DISABLE_AUTO_TITLE=true
+export TLOGGER_AUTOSTART=0
+
+tun0_ip() {
+  ip -4 addr show tun0 2>/dev/null | awk '/inet /{print $2}' | cut -d/ -f1
+}
+
+# The prompt is deliberately left alone. Prompt frameworks such as
+# powerlevel10k re-render asynchronously and will fight any takeover; the
+# per-command log header already records user, host, cwd, UTC time and the
+# tun0 address, so nothing is lost by staying out of the way.
+
+tlogger_capture_exit() {
+  TLOGGER_LAST_EXIT=$?
+  setopt local_options no_err_exit unset
+  # Everything a command produced must be closed out, and stdout handed
+  # back, before any other precmd hook runs - otherwise a prompt plugin
+  # that prints gets recorded as if the command had produced it.
+  if [[ -n "${TLOGGER_LAST_LOGGED:-}" && -n "${TLOGGER_LOG:-}" ]]; then
+    unset TLOGGER_LAST_LOGGED TLOGGER_LAST_PIPED
+  fi
+  [[ -n "${TLOGGER_OUTPUT_TOKEN:-}" ]] \
+    && printf '\033]tlogger-finish;%s\007' "$TLOGGER_OUTPUT_TOKEN" 2>/dev/null
+  [[ -n "${TLOGGER_ACTIVE:-}" || -n "${TLOGGER_OUTPUT_FD:-}" ]] && exec >/dev/tty 2>&1
+  _tlogger_finish_output
+  return 0
+}
+
+_tlogger_clean_ansi() {
+  # "|" as the delimiter so the 0x20-0x2F intermediate range can contain "/"
+  # without an escape - inside a bracket expression a backslash is literal,
+  # and "[ -\/]" silently becomes the range 0x20-0x5C, which swallows text.
+  LC_ALL=C sed -r \
+    -e 's|\x1B\][^\a]*\a||g' \
+    -e 's|\x1B\][^\x1B]*\x1B\\||g' \
+    -e 's|\x1B\[[0-9;:<=>?]*[ -/]*[@-~]||g' \
+    -e 's|\x1B[=>McD78EHZ]||g' \
+    -e 's|\r$||' \
+    -e '/^Script (started|done) on .*\[.*\]$/d' \
+    | tr -d '\000-\010\013\014\016-\037\177' \
+    | iconv -c -f UTF-8 -t UTF-8
+}
+
+# One locked state file is shared by this session's output relays. Stopping
+# recording revokes log writes; it never closes a running tool's terminal.
+_tlogger_disable_state() {
+  setopt local_options no_err_exit unset
+  local _state="${TLOGGER_STATE:-}" _lock
+  [[ -f "$_state" ]] || return 0
+  zmodload zsh/system || return 1
+  zsystem flock -f _lock "$_state" || return 1
+  print -rn -- 0 >| "$_state"
+  rm -f -- "$_state"
+  zsystem flock -u "$_lock"
+}
+
+_tlogger_exit_state() {
+  (( ZSH_SUBSHELL == 0 )) && [[ "${TLOGGER_STATE_OWNER:-}" == "$$" ]] && _tlogger_disable_state
+  return 0
+}
+
+_tlogger_finish_output() {
+  setopt local_options no_err_exit unset
+  if [[ -n "${TLOGGER_OUTPUT_FD:-}" ]]; then
+    local _done
+    # The private boundary follows foreground output in the same byte stream.
+    # Its acknowledgement follows the actual log write, not a cleaner pipe.
+    if ! IFS= read -r -t 5 -u "$TLOGGER_OUTPUT_FD" _done; then
+      echo '[ph03n1x] output completion was not confirmed; logging paused.' >&2
+      unset TLOGGER_ACTIVE
+      export TLOGGER_PAUSED=1
+      _tlogger_disable_state
+    elif [[ "$_done" == failed ]]; then
+      unset TLOGGER_ACTIVE
+      export TLOGGER_PAUSED=1
+      _tlogger_disable_state
+    fi
+    exec {TLOGGER_OUTPUT_FD}<&-
+    unset TLOGGER_OUTPUT_FD TLOGGER_OUTPUT_TOKEN
+  fi
+  return 0
+}
+
+_tlogger_output_pty() {
+  command python3 - "$TLOGGER_LOG" "$TLOGGER_STATE" "${TLOGGER_COLOR:-1}" <<'TLOGGER_PY'
+import codecs
+import errno
+import fcntl
+import os
+from pathlib import Path
+import pty
+import secrets
+import select
+import signal
+import sys
+import termios
+
+for sig in (signal.SIGINT, signal.SIGQUIT, signal.SIGTSTP,
+            signal.SIGTTOU, signal.SIGTTIN, signal.SIGXFSZ):
+    signal.signal(sig, signal.SIG_IGN)
+log_path, state_path, colour = sys.argv[1:]
+use_tty = colour != '0'
+master, slave = pty.openpty() if use_tty else os.pipe()
+slave_name = os.ttyname(slave) if use_tty else f'/proc/{os.getpid()}/fd/{slave}'
+terminal = os.open('/dev/tty', os.O_RDWR | os.O_NOCTTY)
+original_attrs = termios.tcgetattr(terminal)
+shell_group = os.tcgetpgrp(terminal)
+session_id = os.getsid(0)
+if use_tty:
+    attrs = original_attrs[:]
+    attrs[1] &= ~termios.OPOST
+    termios.tcsetattr(slave, termios.TCSANOW, attrs)
+    last_attrs = termios.tcgetattr(slave)
+mirrored_input = False
+input_group = None
+stopped_group = None
+size = None
+state_fd = log_fd = None
+failed = False
+finished = False
+token = secrets.token_hex(16)
+boundary = ('\x1b]tlogger-finish;' + token + '\x07').encode()
+pending = b''
+
+def write_all(fd, data):
+    while data:
+        data = data[os.write(fd, data):]
+
+class Cleaner:
+    # Incremental UTF-8/ANSI parsing keeps split multibyte characters and
+    # escape sequences correct without a subprocess or delayed pipe buffer.
+    def __init__(self):
+        self.decoder = codecs.getincrementaldecoder('utf-8')('ignore')
+        self.mode = 'text'
+        self.cr = False
+
+    def feed(self, data, final=False):
+        out = []
+        for char in self.decoder.decode(data, final):
+            if self.mode == 'esc':
+                if char == '[':
+                    self.mode = 'csi'
+                    continue
+                if char == ']':
+                    self.mode = 'osc'
+                    continue
+                self.mode = 'text'
+                if char in '=>McD78EHZ':
+                    continue
+            elif self.mode == 'csi':
+                if '@' <= char <= '~':
+                    self.mode = 'text'
+                continue
+            elif self.mode == 'osc':
+                if char == '\x07':
+                    self.mode = 'text'
+                elif char == '\x1b':
+                    self.mode = 'osc-esc'
+                continue
+            elif self.mode == 'osc-esc':
+                self.mode = 'text' if char == chr(92) else 'osc'
+                continue
+            if char == '\x1b':
+                self.mode = 'esc'
+                continue
+            if ord(char) < 32 and char not in '\t\n\r' or char == '\x7f':
+                continue
+            if self.cr and char != '\n':
+                out.append('\r')
+            self.cr = char == '\r'
+            if not self.cr:
+                out.append(char)
+        return ''.join(out).encode('utf-8')
+
+cleaner = Cleaner()
+
+def log_bytes(data):
+    global failed, state_fd, log_fd
+    if failed:
+        return
+    try:
+        if state_fd is None:
+            state_fd = os.open(state_path, os.O_RDWR)
+        fcntl.flock(state_fd, fcntl.LOCK_EX)
+        try:
+            if os.pread(state_fd, 1, 0) != b'1':
+                return
+            if log_fd is None:
+                log_fd = os.open(log_path, os.O_WRONLY | os.O_APPEND)
+            write_all(log_fd, data)
+        finally:
+            fcntl.flock(state_fd, fcntl.LOCK_UN)
+    except FileNotFoundError:
+        # A stopped session unlinks its state after marking it inactive.
+        if os.path.exists(state_path):
+            failed = True
+    except OSError:
+        failed = True
+    if failed:
+        if state_fd is not None:
+            try:
+                fcntl.flock(state_fd, fcntl.LOCK_EX)
+                os.pwrite(state_fd, b'0', 0)
+            except OSError:
+                pass
+            finally:
+                fcntl.flock(state_fd, fcntl.LOCK_UN)
+        write_all(terminal, b'\n[ph03n1x] log write failed; screen output continues.\n')
+
+def emit(data):
+    if data:
+        log_bytes(cleaner.feed(data))
+        write_all(terminal, data)
+
+def acknowledge():
+    global finished
+    if not finished:
+        try:
+            write_all(1, b'failed\n' if failed else b'done\n')
+        except OSError:
+            pass
+        finished = True
+
+def consume(data):
+    global pending
+    pending += data
+    index = pending.find(boundary)
+    if index >= 0:
+        emit(pending[:index])
+        acknowledge()
+        pending = pending[index + len(boundary):]
+    # Retain only a possible partial private boundary, never whole lines.
+    keep = min(len(pending), len(boundary) - 1)
+    while keep and not boundary.startswith(pending[-keep:]):
+        keep -= 1
+    if keep:
+        emit(pending[:-keep])
+        pending = pending[-keep:]
+    else:
+        emit(pending)
+        pending = b''
+
+def resize():
+    global size
+    current = fcntl.ioctl(terminal, termios.TIOCGWINSZ, b'\0' * 8)
+    if use_tty and current != size:
+        fcntl.ioctl(master, termios.TIOCSWINSZ, current)
+        size = current
+
+def reader_group():
+    # A raw-mode change alone does not identify its owner. less opens the
+    # slave for reading; locate that actual reader in this terminal session.
+    # stdout-only writers and the shell are deliberately excluded.
+    for proc in Path('/proc').glob('[0-9]*'):
+        try:
+            fields = (proc / 'stat').read_text().rsplit(')', 1)[1].split()
+            group, sid = int(fields[2]), int(fields[3])
+            if sid != session_id or group == shell_group or int(proc.name) == os.getpid():
+                continue
+            for fd in (proc / 'fd').iterdir():
+                if os.readlink(fd) != slave_name:
+                    continue
+                info = (proc / 'fdinfo' / fd.name).read_text().splitlines()
+                flags = int(next(x.split()[1] for x in info if x.startswith('flags:')), 8)
+                if flags & os.O_ACCMODE != os.O_WRONLY:
+                    return group
+        except (OSError, ValueError, StopIteration):
+            continue
+    return None
+
+def sync_input():
+    global last_attrs, mirrored_input, input_group, stopped_group
+    if not use_tty:
+        return False
+    current = termios.tcgetattr(master)
+    foreground = os.tcgetpgrp(terminal)
+    if current != last_attrs:
+        if not current[3] & termios.ICANON:
+            if input_group is None:
+                input_group = reader_group()
+            if input_group is None:
+                return False
+            if foreground != input_group:
+                if stopped_group != input_group:
+                    os.killpg(input_group, signal.SIGTTIN)
+                    stopped_group = input_group
+                return False
+            os.setpgid(0, input_group)
+            stopped_group = None
+        elif not mirrored_input:
+            last_attrs = current
+            return False
+        if foreground not in (input_group, shell_group):
+            return False
+        attrs = termios.tcgetattr(terminal)
+        for index in (0, 3, 6):
+            attrs[index] = current[index]
+        attrs[1] = (original_attrs[1] & ~termios.OPOST
+                    if current[1] & termios.OPOST else original_attrs[1])
+        termios.tcsetattr(terminal, termios.TCSANOW, attrs)
+        last_attrs = current
+        mirrored_input = True
+    return (input_group is not None and not current[3] & termios.ICANON
+            and foreground == input_group)
+
+try:
+    resize()
+    write_all(1, (slave_name + ' ' + token + '\n').encode())
+    if not select.select([master], [], [], 5)[0] or os.read(master, 1) != b'\0':
+        raise SystemExit(1)
+    os.close(slave)
+    slave = -1
+    while True:
+        resize()
+        relay_keys = sync_input()
+        ready = select.select([master, terminal] if relay_keys else [master], [], [], 0.1)[0]
+        if terminal in ready:
+            try:
+                keys = os.read(terminal, 4096)
+                if keys:
+                    write_all(master, keys)
+            except OSError as exc:
+                if exc.errno != errno.EIO:
+                    raise
+        if master not in ready:
+            continue
+        try:
+            data = os.read(master, 65536)
+        except OSError as exc:
+            if exc.errno == errno.EIO:
+                break
+            raise
+        if not data:
+            break
+        consume(data)
+    emit(pending)
+    log_bytes(cleaner.feed(b'', final=True))
+except (OSError, KeyboardInterrupt):
+    pass  # Only a terminal failure ends display forwarding.
+finally:
+    if mirrored_input:
+        try:
+            if os.tcgetpgrp(terminal) in (input_group, shell_group):
+                attrs = termios.tcgetattr(terminal)
+                for index in (0, 1, 3, 6):
+                    attrs[index] = original_attrs[index]
+                termios.tcsetattr(terminal, termios.TCSANOW, attrs)
+        except OSError:
+            pass
+    if slave >= 0:
+        os.close(slave)
+    os.close(master)
+    os.close(terminal)
+    for fd in (log_fd, state_fd):
+        if fd is not None:
+            os.close(fd)
+    acknowledge()
+TLOGGER_PY
+}
+
+# Decide whether a REPL-style command is being launched interactively. Args
+# that run something (a script path, -c, -m for python; -e/--execute/--eval
+# for a database client) mean it runs and exits, so its output belongs in
+# the log; bare, or with only options, it is an interactive prompt to skip.
+_tlogger_repl_is_interactive() {
+  local _r="$1"; shift
+  local _a
+  case "$_r" in
+    python|python2|python3|ipython|node)
+      for _a in "$@"; do
+        case "$_a" in
+          -c|-m) return 1 ;;
+          -i) return 0 ;;
+          --) ;;
+          -*) ;;
+          *) return 1 ;;
+        esac
+      done
+      return 0 ;;
+    mysql|psql|mariadb|mongo|mongosh)
+      for _a in "$@"; do
+        case "$_a" in
+          -e|--execute|--eval|-e*) return 1 ;;
+        esac
+      done
+      return 0 ;;
+    redis-cli|irb|pry)
+      for _a in "$@"; do
+        [[ "$_a" == -e || "$_a" == --eval ]] && return 1
+        [[ "$_a" != -* ]] && return 1
+      done
+      return 0 ;;
+    *) return 0 ;;
+  esac
+}
+
+autoload -Uz add-zsh-hook
+# Put it at the front rather than appending: a prompt plugin loaded earlier
+# would otherwise run while the previous command's capture is still open.
+# Assigning the array also makes a second source of this file idempotent.
+precmd_functions=(tlogger_capture_exit ${precmd_functions:#tlogger_capture_exit})
+
+
+# Empty unless the pty block below is installed, which is what fills it in.
+TLOGGER_PTY_CMDS=()
+
+# Skipped entirely: these run straight against the terminal and are not
+# recorded, because piping them through tee breaks their rendering.
+TLOGGER_INTERACTIVE_CMDS=(
+  vim vi nvim nano emacs
+  less more man
+  fzf
+  htop top btop
+  tmux screen
+  ssh telnet ftp
+  smbclient evil-winrm
+  msfconsole
+  ligolo-proxy ligolo-agent ligolo-ng ligolo-mp ligolo-mp-client
+  impacket-psexec impacket-smbexec impacket-wmiexec impacket-atexec
+  impacket-dcomexec impacket-mssqlclient impacket-smbclient
+  rlwrap gdb r2 radare2
+  sqlmap
+  nc ncat netcat pwncat
+)
+
+# REPL-style tools that are a full-screen prompt when launched bare, but run
+# and exit non-interactively when given a script/query/-c/-m/-e. Skipping
+# them unconditionally on the name alone drops the output that matters -
+# "python3 exploit.py", "python3 -m http.server", "mysql -e '...'". They are
+# skipped only when actually interactive; otherwise they go into the log.
+TLOGGER_REPL_CMDS=(
+  python3 python python2 ipython
+  mysql psql mariadb mongo mongosh redis-cli
+  irb pry node
+)
+
+
+tl_start() {
+  setopt local_options no_err_exit unset
+  [[ -n "$TLOGGER_ACTIVE" ]] && return
+  local _dir="$HOME/Desktop/logs"
+  if ! mkdir -p "$_dir" 2>/dev/null || [[ ! -d "$_dir" ]]; then
+    echo "[ph03n1x] cannot create $_dir — logging NOT started" >&2
+    return 1
+  fi
+  # The pid keeps two terminals opened in the same second apart; without it
+  # they share a file and their commands interleave.
+  local _log="$_dir/session_$(date -u +%Y%m%d_%H%M%S)_UTC.log"
+  if [[ -L "$_log" ]]; then
+    echo "[ph03n1x] $_log is a symlink; refusing to write through it" >&2
+    return 1
+  fi
+  # 600: the log holds every command and its output, credentials included.
+  if ! ( umask 077; : >> "$_log" ) 2>/dev/null || [[ ! -w "$_log" ]]; then
+    echo "[ph03n1x] cannot write $_log — logging NOT started" >&2
+    return 1
+  fi
+  local _state
+  _state="$(mktemp "$_dir/.tlogger-state.$$.XXXXXX")" || return 1
+  print -rn -- 1 >| "$_state"
+  export TLOGGER_STATE="$_state" TLOGGER_STATE_OWNER=$$
+  unset TLOGGER_PAUSED
+  export TLOGGER_LOG="$_log"
+  export TLOGGER_ACTIVE=1
+  echo "[*] Logging started"
+  echo "[*] Log file: $TLOGGER_LOG"
+  (( ${+functions[_tlogger_recover_orphans]} )) && _tlogger_recover_orphans
+  # Explicit: the line above is false in a build without pty capture, and
+  # its status would otherwise become the function's, so a successful start
+  # would look like a failure to the caller.
+  return 0
+}
+
+tl_stop() {
+  setopt local_options no_err_exit unset
+  [[ -z "$TLOGGER_ACTIVE" ]] && return
+  unset TLOGGER_ACTIVE
+  # Without this the pending exit line is printed by the next precmd, when
+  # stdout has already been handed back, so it lands on the screen.
+  unset TLOGGER_LAST_LOGGED TLOGGER_LAST_PIPED
+  export TLOGGER_PAUSED=1
+  [[ -n "${TLOGGER_OUTPUT_TOKEN:-}" ]] \
+    && printf '\033]tlogger-finish;%s\007' "$TLOGGER_OUTPUT_TOKEN" 2>/dev/null
+  exec >/dev/tty 2>&1
+  _tlogger_finish_output
+  _tlogger_disable_state
+  echo "[*] Logging stopped"
+}
+
+tl_status() {
+  setopt local_options no_err_exit unset
+  local _mode="manual"
+  [[ "$TLOGGER_AUTOSTART" -eq 1 ]] && _mode="automatic"
+  if [[ -n "$TLOGGER_ACTIVE" ]]; then
+    local _size="?"
+    [[ -f "$TLOGGER_LOG" ]] && _size=$(du -h "$TLOGGER_LOG" 2>/dev/null | awk '{print $1}')
+    echo "[ph03n1x] ACTIVE  (mode: $_mode)"
+    echo "  log:  $TLOGGER_LOG"
+    echo "  size: $_size"
+  else
+    echo "[ph03n1x] STOPPED (mode: $_mode)"
+  fi
+}
+
+tl_auto() {
+  setopt local_options no_err_exit unset
+  export TLOGGER_AUTOSTART=1
+  echo "[ph03n1x] autostart enabled — every new terminal logs automatically."
+  [[ -z "${TLOGGER_ACTIVE:-}" ]] && tl_start
+}
+
+
+tlogger_preexec() {
+  [[ -n "${TLOGGER_ACTIVE:-}" ]] || return
+  # Isolate from the user's shell options: under errexit a non-zero test in
+  # here would exit the whole shell, and nounset would abort on an unset var.
+  setopt local_options no_err_exit unset
+  if [[ ! -r "${TLOGGER_STATE:-}" || "$(<"$TLOGGER_STATE")" != 1 ]]; then
+    unset TLOGGER_ACTIVE TLOGGER_LAST_LOGGED TLOGGER_LAST_PIPED
+    export TLOGGER_PAUSED=1
+    _tlogger_disable_state
+    return
+  fi
+
+  # Recreate the log at 600 if it went away: a plain append would bring it
+  # back under the ambient umask, usually world-readable.
+  [[ -e "$TLOGGER_LOG" ]] || ( umask 077; : >> "$TLOGGER_LOG" ) 2>/dev/null
+
+  # Two different failures, both of which must stop logging with one message
+  # and no leaked error:
+  #  - the path is not writable (deleted log directory, bad path). Test for it
+  #    first, because a failed ">>" prints its open error before 2>/dev/null
+  #    can apply and one line would reach the terminal.
+  #  - the path is writable but the write itself fails (a full disk: /dev/full
+  #    opens fine, ENOSPC only on write). Detect that from the write's status.
+  _tl_stopped() {
+    _tlogger_disable_state
+    unset TLOGGER_ACTIVE TLOGGER_LAST_LOGGED TLOGGER_LAST_PIPED
+    export TLOGGER_PAUSED=1
+    echo "[ph03n1x] cannot write ${TLOGGER_LOG:-the log} - logging stopped." >&2
+    echo "[ph03n1x] free some space or fix the path, then run tl_start." >&2
+  }
+
+  if [[ ! -w "$TLOGGER_LOG" ]]; then
+    _tl_stopped
+    return
+  fi
+
+  if ! {
+    local _tun0; _tun0=$(tun0_ip)
+    printf "\n╭─ %s ── tun0 %s ── %s\n" \
+      "$(TZ=UTC date '+%Y-%m-%d %H:%M:%S UTC')" \
+      "${_tun0:-offline}" \
+      "${PWD/#$HOME/~}"
+    printf "╰─❯ %s\n" "$1"
+  } >> "$TLOGGER_LOG" 2>/dev/null; then
+    _tl_stopped
+    return
+  fi
+
+  TLOGGER_LAST_LOGGED=1
+
+  # Only a bare invocation is exempt from capture. In a pipeline or list the
+  # output belongs to the whole line, so it still goes through tee; the pty
+  # wrapper stands down on its own there because stdout is no longer a tty.
+  # (z) splits the way the shell does, so an operator inside quotes stays
+  # part of its word: ssh host "a; b" is still a bare ssh invocation.
+  local -a _tlogger_words
+  _tlogger_words=(${(z)1})
+
+  local _tlogger_bare=1 _tlogger_w
+  for _tlogger_w in "$_tlogger_words[@]"; do
+    case "$_tlogger_w" in
+      '|'|'||'|'&'|'&&'|';'|'<'|'>'|'>>'|'<<'|'|&'|'&>'|[0-9]'>'|[0-9]'>>')
+        _tlogger_bare=0
+        break
+        ;;
+    esac
+  done
+
+  # Look past wrappers, their options and assignments - "sudo -u kali vim",
+  # "env -i PATH=/usr/bin vim" - and compare the basename, so /usr/bin/vim
+  # is recognised as vim.
+  local _tlogger_first="${_tlogger_words[1]}"
+  # Declared once: re-running local on a name that already holds a value
+  # makes zsh print it, so declaring inside the loop leaked
+  # _tlogger_optarg=... onto the terminal for every prefixed command.
+  local _tlogger_wrap _tlogger_optarg
+  while (( ${#_tlogger_words} )); do
+    # Test for an assignment on the raw word: :t on PATH=/usr/bin would
+    # leave "bin" and the assignment would no longer be recognised.
+    if [[ "${_tlogger_words[1]}" == *=* ]]; then
+      shift _tlogger_words
+      continue
+    fi
+    _tlogger_wrap="${_tlogger_words[1]:t}"
+    _tlogger_optarg=''
+    case "$_tlogger_wrap" in
+      # Which options take a separate value depends on the wrapper: nice -n
+      # consumes a number, while sudo -n is a flag on its own.
+      sudo|doas) _tlogger_optarg='-u -g -U -C -p -r -t -h -R' ;;
+      proxychains|proxychains4) _tlogger_optarg='-f' ;;
+      env)       _tlogger_optarg='-u -C -S' ;;
+      nice)      _tlogger_optarg='-n' ;;
+      command|nohup|time|stdbuf) _tlogger_optarg='' ;;
+      *) break ;;
+    esac
+    shift _tlogger_words
+    while (( ${#_tlogger_words} )) && [[ "${_tlogger_words[1]}" == -* ]]; do
+      if [[ -n "$_tlogger_optarg" && " $_tlogger_optarg " == *" ${_tlogger_words[1]} "* ]]; then
+        shift _tlogger_words
+        (( ${#_tlogger_words} )) && [[ "${_tlogger_words[1]}" != -* ]] \
+          && shift _tlogger_words
+      else
+        shift _tlogger_words
+      fi
+    done
+  done
+  local _tlogger_cmd="${_tlogger_words[1]:t}"
+
+  if (( _tlogger_bare )); then
+    # The pty wrapper is an alias, so it only fires when the name is the
+    # first word. Through sudo/env or an absolute path it never runs, and
+    # skipping the general capture too would drop the session silently.
+    if (( ${TLOGGER_PTY_CMDS[(I)$_tlogger_cmd]} )) \
+       && [[ "$_tlogger_first" != "$_tlogger_cmd" ]]; then
+      printf "[ph03n1x] %s ran through %s — output not captured (use the command directly for full logging)\n" \
+        "$_tlogger_cmd" "$_tlogger_first" >> "$TLOGGER_LOG"
+    fi
+    for _tlogger_ic in $TLOGGER_INTERACTIVE_CMDS $TLOGGER_PTY_CMDS; do
+      [[ "$_tlogger_cmd" == "$_tlogger_ic" ]] && return
+    done
+    # A REPL is skipped only when launched as an interactive prompt; given a
+    # script or a one-shot query it falls through and its output is logged.
+    if (( ${TLOGGER_REPL_CMDS[(I)$_tlogger_cmd]} )) \
+       && _tlogger_repl_is_interactive "$_tlogger_cmd" "${(@)_tlogger_words[2,-1]}"; then
+      return
+    fi
+  fi
+
+  TLOGGER_LAST_PIPED=1
+  # An output-only pty preserves automatic colour and foreground job control.
+  # Explicit command redirects/pipelines still override these descriptors.
+  local _tlogger_slave
+  if command -v python3 >/dev/null 2>&1 \
+     && exec {TLOGGER_OUTPUT_FD}< <(
+       # Detach the relay: zsh otherwise waits for this process substitution
+       # to finish before read returns, while the relay waits for our open.
+       _tlogger_output_pty &!
+     ) && IFS=' ' read -r -t 3 -u "$TLOGGER_OUTPUT_FD" _tlogger_slave TLOGGER_OUTPUT_TOKEN \
+     && [[ "$_tlogger_slave" == /dev/pts/<-> || "$_tlogger_slave" == /proc/<->/fd/<-> ]]; then
+    if exec > "$_tlogger_slave" 2>&1; then
+      printf '\0'
+      return
+    fi
+  fi
+  _tlogger_finish_output
+  _tl_stopped
+  echo '[ph03n1x] output relay unavailable; this command runs without recording.' >&2
+}
+
+tlogger_precmd() {
+  setopt local_options no_err_exit unset
+  if [[ "${TLOGGER_AUTOSTART:-0}" -eq 1 && -z "${TLOGGER_ACTIVE:-}" && -z "${TLOGGER_PAUSED:-}" ]]; then
+    # A failure here would otherwise be retried, and reported, before every
+    # single prompt for the rest of the session.
+    tl_start || {
+      export TLOGGER_PAUSED=1
+      echo "[ph03n1x] autostart disabled for this shell; fix the above and run tl_start" >&2
+    }
+  fi
+}
+
+add-zsh-hook preexec tlogger_preexec
+add-zsh-hook precmd tlogger_precmd
+add-zsh-hook zshexit _tlogger_exit_state
+
+
+
+
+
+# Captured through a real pty via script(1): the session renders normally
+# on screen AND the full transcript goes into the log.
+# Add any interactive command you want recorded, e.g. (ssh msfconsole mysql)
+TLOGGER_PTY_CMDS=(ssh socat pwncat-cs)
+
+# Taking over a command name would silently drop an alias the user already
+# had - Kali ships "ls --color=auto" - so remember it and keep using it.
+typeset -gA TLOGGER_PTY_ORIG
+
+_tlogger_pty_alias() {
+  local _c="$1"
+  local _existing="${aliases[$_c]:-}"
+  # Sourcing .zshrc again would otherwise store our own wrapper as the
+  # "original" and the command would call itself until FUNCNEST is hit.
+  if [[ "$_existing" == "_tlogger_pty_run "* ]]; then
+    :
+  elif [[ -n "$_existing" ]]; then
+    # Take the current definition every time, so editing the alias and
+    # sourcing again is picked up instead of keeping the stale one.
+    TLOGGER_PTY_ORIG[$_c]="$_existing"
+  fi
+  alias "$_c"="_tlogger_pty_run $_c"
+}
+
+# On a reload, hand back any command that has since been taken off the list.
+_tlogger_pty_sync() {
+  local _c
+  for _c in "${(@k)TLOGGER_PTY_ORIG}"; do
+    (( ${TLOGGER_PTY_CMDS[(I)$_c]} )) && continue
+    [[ "${aliases[$_c]:-}" == "_tlogger_pty_run "* ]] && alias "$_c"="${TLOGGER_PTY_ORIG[$_c]}"
+    unset "TLOGGER_PTY_ORIG[$_c]"
+  done
+  for _c in "${(@k)aliases}"; do
+    [[ "${aliases[$_c]}" == "_tlogger_pty_run "* ]] || continue
+    (( ${TLOGGER_PTY_CMDS[(I)$_c]} )) && continue
+    unalias "$_c" 2>/dev/null
+  done
+}
+
+_tlogger_pty_run() {
+  setopt local_options no_err_exit unset
+  local _tlogger_cmd="$1"
+  shift
+  local _tlogger_real="${TLOGGER_PTY_ORIG[$_tlogger_cmd]:-command $_tlogger_cmd}"
+  # An alias body is shell text, so it has to be re-parsed rather than split
+  # into words: quoting, and expansions such as $PWD that are meant to run
+  # at call time, only survive evaluation.
+  if [[ -z "$TLOGGER_ACTIVE" ]] || [[ ! -t 0 ]] || [[ ! -t 1 ]] \
+     || ! command -v script >/dev/null 2>&1; then
+    eval "$_tlogger_real \"\$@\""
+    return $?
+  fi
+  local _tlogger_tmp
+  # The pid is in the name so an interrupted capture can be identified and
+  # recovered later; see _tlogger_recover_orphans.
+  _tlogger_tmp="$(mktemp -t tlogger_pty.$$.XXXXXX)" || {
+    eval "$_tlogger_real \"\$@\""
+    return $?
+  }
+  # -f flushes after every write: without it the transcript can still be
+  # sitting in a buffer when the terminal is killed, leaving nothing to
+  # recover even though the screen showed the output.
+  script -qef -c "$_tlogger_real ${(j: :)${(qq)@}}" "$_tlogger_tmp"
+  local _tlogger_rc=$?
+  if [[ ! -s "$_tlogger_tmp" ]]; then
+    rm -f "$_tlogger_tmp"
+  elif _tlogger_clean_ansi < "$_tlogger_tmp" >> "$TLOGGER_LOG" 2>/dev/null; then
+    rm -f "$_tlogger_tmp"
+  else
+    # The merge failed (a full disk): keep the transcript, it is the only
+    # copy. This shell's next tl_start, or another shell's once this one
+    # exits, recovers it. Deleting it here is the data loss we are avoiding.
+    echo "[ph03n1x] could not save the captured session to the log; kept at $_tlogger_tmp" >&2
+  fi
+  return $_tlogger_rc
+}
+
+for _tlogger_pc in $TLOGGER_PTY_CMDS; do
+  _tlogger_pty_alias "$_tlogger_pc"
+done
+unset _tlogger_pc
+_tlogger_pty_sync
+
+# A pty capture is only merged into the log once the command finishes, so a
+# terminal killed mid-command leaves its transcript stranded in the temp
+# file. Pick up anything left behind by a shell that is no longer running.
+_tlogger_recover_orphans() {
+  setopt local_options null_glob unset
+  local _f _pid _claim _claimpid
+  for _f in "${TMPDIR:-/tmp}"/tlogger_pty.*(.N); do
+    if [[ "$_f" == *.claimed.* ]]; then
+      # A claim left behind by a recoverer that died before merging. If its
+      # claimer is still alive, leave it be; otherwise re-process it, or its
+      # contents would be skipped forever.
+      _claimpid="${_f##*.claimed.}"
+      [[ "$_claimpid" == <-> ]] && kill -0 "$_claimpid" 2>/dev/null && continue
+      _pid="${${_f:t}#tlogger_pty.}"
+      _pid="${_pid%%.*}"
+      # Re-claim atomically, exactly like a fresh file: two terminals racing on
+      # the same dead claim must not both import it (that doubled the lines).
+      # Whoever wins the rename owns it; the loser's mv fails and it moves on.
+      _claim="${_f}.claimed.$$"
+      mv -- "$_f" "$_claim" 2>/dev/null || continue
+    else
+      _pid="${${_f:t}#tlogger_pty.}"
+      _pid="${_pid%%.*}"
+      [[ "$_pid" == <-> ]] || continue
+      kill -0 "$_pid" 2>/dev/null && continue
+
+      # Claim by rename: whoever wins the rename owns the file, so two
+      # terminals starting at once cannot both import the same transcript.
+      _claim="${_f}.claimed.$$"
+      mv -- "$_f" "$_claim" 2>/dev/null || continue
+    fi
+
+    if [[ -s "$_claim" ]]; then
+      # Only drop the source once it is safely in the log: on a full disk
+      # this is the sole copy of that session.
+      if printf "\n[ph03n1x] recovered session from terminated shell (pid %s)\n" "$_pid" \
+           >> "$TLOGGER_LOG" 2>/dev/null \
+         && _tlogger_clean_ansi < "$_claim" >> "$TLOGGER_LOG" 2>/dev/null; then
+        rm -f -- "$_claim"
+      else
+        echo "[ph03n1x] could not write recovered transcript; kept at $_claim" >&2
+        mv -- "$_claim" "$_f" 2>/dev/null
+        return 1
+      fi
+    else
+      rm -f -- "$_claim"
+    fi
+  done
+  return 0
+}
+
+
+TLOGGER_SH
+  sed -i "s/\[ph03n1x\]/[$USER_NAME]/g" "$STAGE_DIR/config/tlogger.sh"
+  zsh -n "$STAGE_DIR/config/tlogger.sh" || die 'tlogger shell syntax check failed.'
+  install -m 0644 "$STAGE_DIR/config/tlogger.sh" "$HOME/.config/kali-i3/tlogger.sh"
+  append_tlogger_hook "$HOME/.zshrc"
+  say 'TLoggerV3.1 installed. In a new terminal: tl_start / tl_stop / tl_status / tl_auto.'
+}
+
+if [[ "$MODE" == install && "$GUEST_ARCH" == arm64 ]]; then
+  if [[ "$INSTALL_DONUT" -eq 1 ]]; then
+    progress 'Installing the Donut CLI'
+    install_arm64_donut
+  fi
+  if [[ "$INSTALL_VEIL" -eq 1 ]]; then
+    progress 'Installing Veil'
+    install_arm64_veil
+  fi
+  if [[ "$INSTALL_SHELLTER" -eq 1 ]]; then
+    progress 'Installing Shellter'
+    install_arm64_shellter
+  fi
+fi
+
+if [[ "$MODE" == install && "$INSTALL_OBSIDIAN" -eq 1 ]]; then
+  progress 'Installing Obsidian, vault and plugins'
+  if install_obsidian "$GUEST_ARCH"; then
+    provision_obsidian_vault ||
+      say 'Obsidian vault provisioning hit a snag; see the messages above.'
+  else
+    say 'Obsidian was not installed; rerun this script to try again.'
+  fi
+fi
+
+if [[ "$MODE" == install && "$INSTALL_TLOGGER" -eq 1 ]]; then
+  progress 'Installing TLoggerV3.1'
+  install_tlogger
+fi
+
+if [[ "$MODE" == install ]]; then
+  _state="${XDG_STATE_HOME:-$HOME/.local/state}/kali-i3-setup"
+  mkdir -p "$_state"
+  [[ "$INSTALL_DONUT"    -eq 0 ]] && touch "$_state/skip-donut"    || rm -f "$_state/skip-donut"
+  [[ "$INSTALL_VEIL"     -eq 0 ]] && touch "$_state/skip-veil"     || rm -f "$_state/skip-veil"
+  [[ "$INSTALL_SHELLTER" -eq 0 ]] && touch "$_state/skip-shellter" || rm -f "$_state/skip-shellter"
+  [[ "$INSTALL_OBSIDIAN" -eq 0 ]] && touch "$_state/skip-obsidian" || rm -f "$_state/skip-obsidian"
+  [[ "$INSTALL_TLOGGER"  -eq 0 ]] && touch "$_state/skip-tlogger"  || rm -f "$_state/skip-tlogger"
+fi
+
+ui_finish
+if pgrep -x i3 >/dev/null 2>&1; then
+  i3-msg restart >/dev/null 2>&1 && say 'i3 restarted — bar refreshed.'
+fi
+say 'Done. Log out and back into i3 to see the Black Ph03n1x wallpaper, bar, and lightly transparent terminals.'
+say 'Super+Return opens a terminal; Super+Shift+Return asks for its name.'
+say 'In any terminal, run tn recon or just tn to rename that terminal.'
+say 'Terminals are lightly transparent by default so the wallpaper shows through; if VMware graphics glitch, rerun with --safe-mode to force opaque.'
+say 'Fallback terminal: Ctrl+Alt+Return. Fallback launcher: Ctrl+Alt+d.'
+say 'If VMware shows black windows, run this script with --safe-mode from a terminal or TTY.'
+say 'After login, rerun this script with --check to verify the setup.'
