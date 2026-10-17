@@ -3,7 +3,7 @@
 # Ignite your Black Ph03n1x workstation. Run as your normal Kali user: ./ignite
 #
 # ─────────────────────────── DISCLAIMER ───────────────────────────
-# Version 1.0. This is a personal setup script, shared as-is.
+# Version 1.2. This is a personal setup script, shared as-is.
 # It was built and tested on ONE machine only: my personal MacBook with an
 # Apple Silicon (ARM) processor, running Kali Linux as an ARM64 guest in
 # VMware Fusion. It is NOT guaranteed to work on other hardware, other
@@ -13,7 +13,7 @@
 set -Eeuo pipefail
 
 readonly APP_NAME="ignite"
-readonly APP_VERSION="1.1"
+readonly APP_VERSION="1.2"
 readonly KALI_MIRROR="https://http.kali.org/kali"
 MODE=install
 INSTALL_DONUT=1
@@ -2186,6 +2186,8 @@ install_tlogger() {
 
 export DISABLE_AUTO_TITLE=true
 export TLOGGER_AUTOSTART=0
+TLOGGER_AUTOSTART_FILE="$HOME/.config/kali-i3/.tlogger-autostart"
+[[ -f "$TLOGGER_AUTOSTART_FILE" ]] && export TLOGGER_AUTOSTART=1
 
 tun0_ip() {
   ip -4 addr show tun0 2>/dev/null | awk '/inet /{print $2}' | cut -d/ -f1
@@ -2602,6 +2604,7 @@ TLOGGER_INTERACTIVE_CMDS=(
   smbclient evil-winrm
   msfconsole
   ligolo-proxy ligolo-agent ligolo-ng ligolo-mp ligolo-mp-client
+  proxy agent  # ligolo-ng release binaries (download) are named proxy and agent
   impacket-psexec impacket-smbexec impacket-wmiexec impacket-atexec
   impacket-dcomexec impacket-mssqlclient impacket-smbclient
   rlwrap gdb r2 radare2
@@ -2690,7 +2693,15 @@ tl_status() {
 
 tl_auto() {
   setopt local_options no_err_exit unset
+  if [[ "$1" == off ]]; then
+    export TLOGGER_AUTOSTART=0
+    rm -f "$TLOGGER_AUTOSTART_FILE" 2>/dev/null
+    echo "[ph03n1x] autostart disabled."
+    return
+  fi
   export TLOGGER_AUTOSTART=1
+  mkdir -p "${TLOGGER_AUTOSTART_FILE:h}" 2>/dev/null
+  : >| "$TLOGGER_AUTOSTART_FILE" 2>/dev/null
   echo "[ph03n1x] autostart enabled — every new terminal logs automatically."
   [[ -z "${TLOGGER_ACTIVE:-}" ]] && tl_start
 }
