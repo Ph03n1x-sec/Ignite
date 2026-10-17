@@ -1575,15 +1575,14 @@ if [[ "${BLOCK_BUTTON:-}" == 1 && -n "$clip" ]]; then
     notify-send 'VPN address copied' "$clip" >/dev/null 2>&1
   fi
 fi
-vpn_part="${tun0:+VPN $tun0}"
-ts_part="${ts0:+TS $ts0}"
-[[ -z "$vpn_part" ]] && vpn_part='VPN ✗'
-[[ -z "$ts_part" ]] && ts_part='TS ✗'
-label="$vpn_part | $ts_part"
-if [[ -n "$tun0" || -n "$ts0" ]]; then
-  printf '%s\n\n#d84a62\n' "$label"
+if [[ -n "$tun0" && -n "$ts0" ]]; then
+  printf 'VPN %s · TS %s\n\n#d84a62\n' "$tun0" "$ts0"
+elif [[ -n "$tun0" ]]; then
+  printf 'VPN %s\n\n#d84a62\n' "$tun0"
+elif [[ -n "$ts0" ]]; then
+  printf 'TS %s\n\n#d84a62\n' "$ts0"
 else
-  printf '%s\n\n#87909b\n' "$label"
+  printf 'VPN ✗\n\n#d84a62\n'
 fi
 VPN_BLOCK
 
