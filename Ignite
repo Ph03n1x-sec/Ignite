@@ -2253,23 +2253,31 @@ install_arm64_veil() {
     sudo systemctl restart docker
   fi
 
+  local veil_output="$HOME/.local/share/kali-i3-setup/veil-output"
   if dkr ps -a --format '{{.Names}}' 2>/dev/null | grep -qx veil-box; then
     say 'veil-box container already exists; reusing it.'
     dkr start veil-box >/dev/null 2>&1 || true
   else
     say 'Pulling an amd64 Kali image and creating the veil-box container (this runs emulated; it is slow).'
-    local veil_output="$HOME/.local/share/kali-i3-setup/veil-output"
     mkdir -p "$veil_output"
     dkr run -d --platform linux/amd64 --name veil-box --hostname veil-box \
       --restart unless-stopped -v "$veil_output:/var/lib/veil/output" \
       kalilinux/kali-rolling sleep infinity ||
       die 'Could not create the veil-box container.'
+  fi
 
-    # Pin the container to the main Kali redirector so apt doesn't land on a
-    # flaky geographic mirror that is unreachable from inside Docker.
-    dkr exec veil-box bash -c \
-      'echo "deb http://http.kali.org/kali kali-rolling main non-free non-free-firmware contrib" > /etc/apt/sources.list'
+  # Pin the container to Kali's CDN rather than the http.kali.org redirector:
+  # inside Docker the redirector can resolve to a geographic mirror that the
+  # container cannot reach, which aborts the apt install below.
+  dkr exec veil-box bash -c \
+    'echo "deb http://kali.download/kali kali-rolling main non-free non-free-firmware contrib" > /etc/apt/sources.list'
 
+  # Install Veil only if it is not already present, so a run interrupted partway
+  # (e.g. a transient mirror failure) can be repaired by simply re-running this
+  # script -- the same way the Shellter step below guards itself. Previously the
+  # install lived in the container-creation branch only, so a half-built,
+  # already-existing container could never be completed by re-running.
+  if ! dkr exec veil-box dpkg-query -W -f='${Status}' veil 2>/dev/null | grep -qx 'install ok installed'; then
     say 'Installing Veil inside veil-box (apt, under emulation — this takes a while).'
     dkr exec veil-box bash -c 'apt-get -qq update && DEBIAN_FRONTEND=noninteractive apt-get install -yqq veil xvfb lftp' ||
       die 'Failed to install veil inside veil-box.'
@@ -2288,6 +2296,7 @@ install_arm64_veil() {
     '
     # Veil writes payloads as root inside the container; reclaim the bind mount
     # so generated files are owned by the normal user, not root.
+    mkdir -p "$veil_output"
     sudo chown -R "$this_user:$this_user" "$veil_output"
   fi
 
